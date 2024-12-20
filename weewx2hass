@@ -35,11 +35,11 @@ makeConfig() {
     ___get_config() {
         local _conf="$CEN_OPT_CONF"
         if [ -z "$_conf" ] ; then                           # no --config option
-            _conf="$DAT_DEFDIR/$CEN_NAME" ; [ -f "$_conf" ] || _conf= 
+            _conf="$DAT_DEFDIR/$CEN_NAME" ; [ -f "$_conf" ] || _conf=
         elif ! [ -f "$_conf" -a -r "$_conf" ] ; then        # invalid --config ?
                 quit -e "Not readable file:" "$_conf"
         fi
-        if [ -n "$_conf" ] ; then           
+        if [ -n "$_conf" ] ; then
             message "Loading configuration:" "$_conf"
             # shellcheck disable=SC1090
             source "$_conf" || quit -e
@@ -152,7 +152,7 @@ ITEMS=(weewx/inside  'inTemp;Temperature inside;C' 'inHumidity;Humidity inside;%
 
 ### an optional log file (default is no output) ###
 
-#   LOGFILE='/var/log/weewx2hass'
+#   LOGFILE='/var/log/$CEN_NAME'        # must be writable for user 'weewx'!
 
 !EOF
 }
@@ -167,7 +167,7 @@ showMQTT() {
 #
 #       apt install mosquitto
 #
-#   At the machine that runs weewx and the weewx2hass script you will need
+#   At the machine that runs weewx and the $CEN_NAME script you will need
 #   the mosquitto client tools:
 #
 #       apt install mosquitto-clients
@@ -191,33 +191,77 @@ allow_anonymous true
 
 # show service example: [<file>]
 showSysd() {
-    create -c -t -- "${1:--}" <<!EOF
-# The easiest way to launch '$CEN_NAME' is to add it to the 'weewx' systemd
-# service. This can be done by creating an overlay file:
+    local what=0 text=() temp
+    case "$1" in
+    *override) what=1 ;;
+    *service)  what=2
+    esac
+    readarray -t temp <<!EOF
+[Unit]
+Description=$CEN_TITLE
+After=weewx.service
+ConditionPathExists=/etc/default/$CEN_NAME
 
-    $ cat /etc/systemd/system/weewx.service.d/override.conf <<!EOF
+[Service]
+ExecStart=-/usr/local/bin/$CEN_NAME --run --quiet
+ExecReload=/bin/kill -HUP $MAINPID
+Type=simple
+User=weewx
+Group=users
+
+[Install]
+WantedBy=weewx.service
+!EOF
+    if [ "$what" = 0 ] ; then
+        readarray -t text <<!EOF
+The easiest way to launch '$CEN_NAME' is to add it to the 'weewx' systemd
+service. This can be done by creating an overlay file:
+
+    # /etc/systemd/system/weewx.service.d/override.conf
     [Service]
     ExecStartPost=-/usr/local/bin/$CEN_NAME --run
-    > !EOF
 
-# The '--run' option starts '$CEN_NAME' as a background process. This works
-# fine with systemd. Input and output are redirected to '/dev/null'. For
-# optional logging a logfile can be configured, see 'LOGFILE=' in config.
+Another way is to create a '/etc/systemd/system/$CEN_NAME.service' file:
 
-# Notes:    (1) copy or symlink '$CEN_NAME' to '/usr/local/bin'
-#           (2) create a configuration in '/etc/default/$CEN_NAME'
-#           (3) (optional) a configured logfile must writable by 'weewx'
-#           (4) (optional) use options '--verbose' or '--quiet'
+    # /etc/systemd/system/$CEN_NAME.service
+ ${temp[@]//*/   &$'\n'}
+The '--run' option starts '$CEN_NAME' as a background process. This works
+fine with systemd. Input and output are redirected to '/dev/null'. For
+optional logging a logfile can be configured, see 'LOGFILE=' in config.
+
+Notes: (1) copy or symlink '$CEN_NAME' to '/usr/local/bin'
+       (2) create a configuration in '/etc/default/$CEN_NAME'
+       (3) (optional) a configured logfile must writable by 'weewx'
+       (4) (optional) use options '--verbose' or '--quiet'
+
+Files: Use one of the following command sets to create the service config:
+
+       $ mkdir /etc/systemd/system/weewx.service.d
+       $ $CEN_NAME -S sys /etc/systemd/system/weewx.service.d/override.conf
+
+       -or-
+
+       $ $CEN_NAME -S sys /etc/systemd/system/$CEN_NAME.service
+       $ systemctl daemon-reload
+       $ systemctl enable $CEN_NAME.service
 
 !EOF
+    elif [ "$what" = 1 ] ; then
+        readarray -t text <<!EOF
+[Service]
+ExecStartPost=-/usr/local/bin/$CEN_NAME --run
+!EOF
+    else
+        text+=("${temp[@]}")
+    fi
+    create -v text -t -- "${1:--}"
 }
 
 # show the mqtt yaml: [<file>]
 showYaml() {
     makeConfig                              # be sure to have config
 
-    local _item _entr _name _ents=() _flds=()
-    local _yaml
+    local _yaml _item _entr _name _ents=() _flds=()
     IFS=$'\n' read -d '' -a _yaml -r <<!EOF
 # These are entity definitions generated from your configuration.
 # There are two methods to add this data to 'configuration.yaml':
@@ -233,30 +277,30 @@ showYaml() {
         for _entr in "${_ents[@]:1}" ; do
             splitjoin -d ';' -s _flds -- "$_entr"
             _name="${_flds[1],,}" ; _name="${_name//[!a-z0-9]/_}"
-            _yaml+=("    - name: \"$_name\"")
-            _yaml+=("      unique_id: \"${_name}_$$\"")
-            _yaml+=("      state_topic: \"$_item\"")
+            _yaml+=("    - name: \"$_name\""
+                    "      unique_id: \"${_name}_$$\""
+                    "      state_topic: \"$_item\"")
             case "${_flds[2]}" in
             C|F)
-                _yaml+=('      suggested_display_precision: 1')
-                _yaml+=("      unit_of_measurement: \"°${_flds[2]}\"")
-                _yaml+=('      value_template: "{{ value_json.temperature }}"')
-                _yaml+=('      device_class: "temperature"') ;;
+                _yaml+=('      suggested_display_precision: 1'
+                        "      unit_of_measurement: \"°${_flds[2]}\""
+                        '      value_template: "{{ value_json.temperature }}"'
+                        '      device_class: "temperature"') ;;
             K)
-                _yaml+=('      suggested_display_precision: 1')
-                _yaml+=('      unit_of_measurement: "km/h"')
-                _yaml+=('      value_template: "{{ value_json.speed }}"')
-                _yaml+=('      device_class: "speed"') ;;
+                _yaml+=('      suggested_display_precision: 1'
+                        '      unit_of_measurement: "km/h"'
+                        '      value_template: "{{ value_json.speed }}"'
+                        '      device_class: "speed"') ;;
             M)
-                _yaml+=('      suggested_display_precision: 1')
-                _yaml+=('      unit_of_measurement: "mph"')
-                _yaml+=('      value_template: "{{ value_json.speed }}"')
-                _yaml+=('      device_class: "speed"') ;;
+                _yaml+=('      suggested_display_precision: 1'
+                        '      unit_of_measurement: "mph"'
+                        '      value_template: "{{ value_json.speed }}"'
+                        '      device_class: "speed"') ;;
             %)
-                _yaml+=('      suggested_display_precision: 1')
-                _yaml+=('      unit_of_measurement: "%"')
-                _yaml+=('      value_template: "{{ value_json.humidity }}"')
-                _yaml+=('      device_class: "humidity"') ;;
+                _yaml+=('      suggested_display_precision: 1'
+                        '      unit_of_measurement: "%"'
+                        '      value_template: "{{ value_json.humidity }}"'
+                        '      device_class: "humidity"') ;;
             *)
                 _yaml+=("      value_template: \"{{ value_json.${_flds[0],,} }}\"")
             esac
@@ -277,7 +321,7 @@ makeJSON() {
     while [ "$#" -gt 0 ] ; do
         _jval="${2%[[::space::]]*}"             # remove trailing whitespace
         [ "$#" -gt 2 ] && _jsep=',' || _jsep=
-        printf -v _jitm '"%s": "%s"%s\n' "$1" "$_jval" "$_jsep" 
+        printf -v _jitm '"%s": "%s"%s\n' "$1" "$_jval" "$_jsep"
         _jdat+="$_jitm" ; shift ; shift
     done
     printf -v "$_vnam" '{\n%s}\n' "$_jdat"
@@ -387,12 +431,11 @@ sendEntr() {
 
 # main loop, run until killed from outside
 run_loop() {
-    message -l "Weewx columns:" "$DAT_COLUMNS"
+    message -l "WeeWX columns:" "$DAT_COLUMNS"
 
     # try to enable 'sleep' as builtin (see apt install bash-builtins)
     enable sleep &>/dev/null
 
-    #local asql tmpi tmpo humi humo json
     local item ents
     while : ; do
                                             # fetch db record
@@ -515,7 +558,7 @@ Arguments: <conf>               The configuration file
 Configs:   Use the --show option to get configuration help. An output file can
            be specified (default is output to stdout):
 
-           $CEN_NAME --show config          # weewx2hass config example
+           $CEN_NAME --show config          # $CEN_NAME config example
            $CEN_NAME --show broker          # install/configure mosquitto
            $CEN_NAME --show systemd         # a service example
 
