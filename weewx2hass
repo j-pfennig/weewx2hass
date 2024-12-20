@@ -1,0 +1,982 @@
+#!/usr/bin/bash
+CEN_LEGAL="Copyright Dr. J. Pfennig (c) 2024; BSD License"
+CEN_TITLE="Tool to foreward data from WeeWX to Home Assistant viq MQtt"
+
+# declare global variables ...
+
+CEN_OPT_CONF=                       # see --config
+CEN_OPT_DATA=                       # see --data
+CEN_OPT_HOST=                       # see --host
+CEN_OPT_LOGF=                       # see --logfile
+CEN_OPT_RUN=                        # see --run
+CEN_OPT_SHOW=                       # see --show
+
+DAT_SQLITE='/var/lib/weewx/weewx.sdb'
+DAT_BROKER=('-h' 'localhost')
+DAT_DEFDIR='/etc/default'
+
+declare -A DAT_MQTTDICT             # used to suppress extra mqtt pub calls
+declare -A DAT_ITEMDICT             # map <tag>/<value> and <column>/<index>
+DAT_ITEMINDX=0                      # <column> array index, see DAT_ITEMDICT
+DAT_COLUMNS=                        # list of database columns
+DAT_RESULT=                         # array of sql query results
+DAT_SLEEP=120                       # sleep time between polls
+DAT_ALIVE=5                         # update MQtt at least every <n> polls
+DAT_COUNTER=1                       # data base poll counter
+DAT_LOGFILE=                        # path of logfile
+
+# ------------------------------------------------------------------------------
+# Config
+# ------------------------------------------------------------------------------
+
+# setup config: [<tag> <value>...]...
+makeConfig() {
+    # load configuration file, add cmd-line args: <args>...
+    ___get_config() {
+        local _conf="$CEN_OPT_CONF"
+        if [ -z "$_conf" ] ; then                           # no --config option
+            _conf="$DAT_DEFDIR/$CEN_NAME" ; [ -f "$_conf" ] || _conf= 
+        elif ! [ -f "$_conf" -a -r "$_conf" ] ; then        # invalid --config ?
+                quit -e "Not readable file:" "$_conf"
+        fi
+        if [ -n "$_conf" ] ; then           
+            message "Loading configuration:" "$_conf"
+            # shellcheck disable=SC1090
+            source "$_conf" || quit -e
+        fi
+        [ -n "$CEN_OPT_HOST" ] && ITEMS+=("$@")
+        [ "${#ITEMS[@]}" = 0 ] && quit -e "Got no configuration data"
+    }
+
+    # get an ITEM and call ___add_item: <no args>
+    ___get_items() {
+        local _item _args
+        for _item in "${ITEMS[@]}" ; do
+            if [ "${_item/\//}" = "$_item" ] ; then         # no slash -> is no tag
+                if [ -z "$_args" ] ; then
+                    error "Expected a <tag>:" "$_item" ; continue
+                fi
+                _args+=("$_item") ; continue
+            fi
+            [ -n "$_args" ] && ___add_item "${_args[@]}"
+            _args=("$_item")
+        done
+        [ -n "$_args" ] && ___add_item "${_args[@]}"
+    }
+
+    # add a data item to dictionary: <tag> <entr>...
+    ___add_item() {
+        local _vnam
+        splitjoin -d '\n' -j DAT_ITEMDICT["$1"] -- "$@"
+        while [ "$#" -gt 1 ] ; do
+            shift ; _vnam="${1%%;*}"
+            trace -a -c "___add_item" "$1"
+            [ -z "${1#*;}" -o "$_vnam" = "$1" ] &&
+                error "Required syntax is '<column>;<name>[;C|F|%]':" "$1"
+            # column name list for select statement
+            [ -z "$DAT_COLUMNS" ] && DAT_COLUMNS="$_vnam" \
+                                  || DAT_COLUMNS+=", $_vnam"
+            # mapping the column name to an array index for select data
+            DAT_ITEMDICT["$_vnam:"]="$DAT_ITEMINDX" ; ((DAT_ITEMINDX += 1))
+        done
+    }
+
+    [ "$DAT_ITEMINDX" = 0 ] || return           # already loaded
+
+    local BROKER=() ITEMS=() SQLITE LOGFILE     # config data items
+    local -i ALIVE=0 SLEEP=0
+    ___get_config "$@"                          # source config file
+    ___get_items                                # call ___add_item for ITEMS
+                                                # Mosquitto host and db-file
+    [ "${#BROKER[@]}" = 1 ] && BROKER=('-h' "$BROKER")
+    [ -n "$BROKER" ] && DAT_BROKER=("${BROKER[@]}")
+    [ -n "$SQLITE" ] && DAT_SQLITE="$SQLITE"    # data base path
+    [ "$SLEEP" = 0 ] || DAT_SLEEP="$SLEEP"      # sleep time between polls
+    [ "$ALIVE" = 0 ] || DAT_ALIVE="$ALIVE"      # update MQtt at least every <n> polls
+    DAT_LOGFILE="$LOGFILE"
+
+    error -q                                    # quit on error
+}
+
+# show default config: [<file>]
+showConf() {
+    create -c -t -- "${1:--}" <<!EOF
+# This an example for a '$CEN_NAME' configuration file. The file is sourced
+# by bash, so please follow the syntax rules and do nothing evil ...
+
+### weewx database path (must be SQLite) ###
+
+#   SQLITE='/var/lib/weewx/weewx.sdb'
+
+### mosquitto_pub arguments (-t and -m are added automatically) ###
+
+#   Either a single word, which translates to '-h <host>' or a list of words
+#   which will be added literally to the argument list:
+
+#   BROKER='raspi1.some.home'
+#   BROKER='-h raspi1 -p 1883 -u whoever'
+
+### override poll time and keep alive frequency
+
+#   SLEEP=120
+#   ALIVE=5
+
+### list of data items ###
+
+#   The syntax is: <items> := <entry>...
+#                  <entry> := <tag> <value>...
+#                  <tag>   := <word>[/<word>]...
+#                  <value> := <column>;<label>[;<unit>]
+#
+#                  <column>      # name of any field in table 'archive'
+#                  <label>       # a short description
+#                  <unit>        # set device class, do unit conversion
+#                                # 'C' temperature °F -> °C  'F' temperature °F
+#                                # 'K' speed mph -> km/h     'M' speed mph
+#                                # '%' humidity
+#   Home Assistant entity names are generated automatically from <label>
+
+        # convert to metric units
+
+ITEMS=(weewx/inside  'inTemp;Temperature inside;C' 'inHumidity;Humidity inside;%'
+       weewx/outside 'outTemp;Temperature outside;C' 'outHumidity;Humidity outside;%'
+       weewx/wind    'windGust;Wind gust;K'
+)
+
+        # keep weird units found in db but set device class
+
+#ITEMS=(weewx/inside  'inTemp;Temperature inside;F' 'inHumidity;Humidity inside;%'
+#       weewx/outside 'outTemp;Temperature outside;F' 'outHumidity;Humidity outside;%'
+#       weewx/wind    'windGust;Wind gust;M'
+#)
+
+### an optional log file (default is no output) ###
+
+#   LOGFILE='/var/log/weewx2hass'
+
+!EOF
+}
+
+# show the mqtt config: [<file>]
+showMQTT() {
+    create -c -t -- "${1:--}" <<!EOF
+# INSTALLATION OF MOSQUITTO MQTT BROKER
+#
+#   For a Debian like system install mosquitto somewhere (if it is not yet
+#   running at the Home Assistant machine):
+#
+#       apt install mosquitto
+#
+#   At the machine that runs weewx and the weewx2hass script you will need
+#   the mosquitto client tools:
+#
+#       apt install mosquitto-clients
+#
+# CONFIGURATION ALLOWING ANONYMOUS ACCESS
+#
+#   For a home environment (behind a router that blocks access from outside)
+#   anonymous MQTT is OK. So you can use this is a simplistic configuration
+#   (on the machine that runs mosquitto): /etc/mosquitto/mosquitto.conf:
+
+pid_file /run/mosquitto/mosquitto.pid
+persistence true
+persistence_location /var/lib/mosquitto/
+log_dest file /var/log/mosquitto/mosquitto.log
+listener 1883
+allow_anonymous true
+
+# End
+!EOF
+}
+
+# show service example: [<file>]
+showSysd() {
+    create -c -t -- "${1:--}" <<!EOF
+# The easiest way to launch '$CEN_NAME' is to add it to the 'weewx' systemd
+# service. This can be done by creating an overlay file:
+
+    $ cat /etc/systemd/system/weewx.service.d/override.conf <<!EOF
+    [Service]
+    ExecStartPost=-/usr/local/bin/$CEN_NAME --run
+    > !EOF
+
+# The '--run' option starts '$CEN_NAME' as a background process. This works
+# fine with systemd. Input and output are redirected to '/dev/null'. For
+# optional logging a logfile can be configured, see 'LOGFILE=' in config.
+
+# Notes:    (1) copy or symlink '$CEN_NAME' to '/usr/local/bin'
+#           (2) create a configuration in '/etc/default/$CEN_NAME'
+#           (3) (optional) a configured logfile must writable by 'weewx'
+#           (4) (optional) use options '--verbose' or '--quiet'
+
+!EOF
+}
+
+# show the mqtt yaml: [<file>]
+showYaml() {
+    makeConfig                              # be sure to have config
+
+    local _item _entr _name _ents=() _flds=()
+    local _yaml
+    IFS=$'\n' read -d '' -a _yaml -r <<!EOF
+# These are entity definitions generated from your configuration.
+# There are two methods to add this data to 'configuration.yaml':
+#
+# (1) simply add or find 'mqtt:' (not indented) and put this data below
+# (2) add or find 'mqtt:' and add '  !include <file>' below, save this
+#     data in <file>. Example: $CEN_NAME -S yaml weewx-sensors.yaml
+#
+  sensor:
+!EOF
+    for _item in "${!DAT_ITEMDICT[@]}" ; do
+        loadItem "$_item" _ents
+        for _entr in "${_ents[@]:1}" ; do
+            splitjoin -d ';' -s _flds -- "$_entr"
+            _name="${_flds[1],,}" ; _name="${_name//[!a-z0-9]/_}"
+            _yaml+=("    - name: \"$_name\"")
+            _yaml+=("      unique_id: \"${_name}_$$\"")
+            _yaml+=("      state_topic: \"$_item\"")
+            case "${_flds[2]}" in
+            C|F)
+                _yaml+=('      suggested_display_precision: 1')
+                _yaml+=("      unit_of_measurement: \"°${_flds[2]}\"")
+                _yaml+=('      value_template: "{{ value_json.temperature }}"')
+                _yaml+=('      device_class: "temperature"') ;;
+            K)
+                _yaml+=('      suggested_display_precision: 1')
+                _yaml+=('      unit_of_measurement: "km/h"')
+                _yaml+=('      value_template: "{{ value_json.speed }}"')
+                _yaml+=('      device_class: "speed"') ;;
+            M)
+                _yaml+=('      suggested_display_precision: 1')
+                _yaml+=('      unit_of_measurement: "mph"')
+                _yaml+=('      value_template: "{{ value_json.speed }}"')
+                _yaml+=('      device_class: "speed"') ;;
+            %)
+                _yaml+=('      suggested_display_precision: 1')
+                _yaml+=('      unit_of_measurement: "%"')
+                _yaml+=('      value_template: "{{ value_json.humidity }}"')
+                _yaml+=('      device_class: "humidity"') ;;
+            *)
+                _yaml+=("      value_template: \"{{ value_json.${_flds[0],,} }}\"")
+            esac
+            _yaml+=('')
+        done
+    done
+    create -t -v _yaml
+}
+
+# ------------------------------------------------------------------------------
+# Data conversions
+# ------------------------------------------------------------------------------
+
+# create a JSON data record: <vnam> [<key> <val>]...
+makeJSON() {
+    local _vnam="$1" _jitm _jsep _jdat _jval ; shift
+    trace -a -c 'makeJSON' "$@"
+    while [ "$#" -gt 0 ] ; do
+        _jval="${2%[[::space::]]*}"             # remove trailing whitespace
+        [ "$#" -gt 2 ] && _jsep=',' || _jsep=
+        printf -v _jitm '"%s": "%s"%s\n' "$1" "$_jval" "$_jsep" 
+        _jdat+="$_jitm" ; shift ; shift
+    done
+    printf -v "$_vnam" '{\n%s}\n' "$_jdat"
+}
+
+# fixed point F to C° conversion: <vnam> <data>
+convF2C() {
+    local _fnum="${2%%.*}" _ffra="${2#*.}"
+    [ "$_fnum" = "$_ffra" ] && _ffra=0 || _ffra="${_ffra::1}"
+    # rounding is ceil(), might do better emulating round()
+    _fnum="$(((_fnum * 100 + _ffra * 10 - 3195) / 18))"
+    _fnum="${_fnum::-1}.${_fnum: -1}"           # one decimal place only
+    case "$_fnum" in                            # make sure to have leading 0
+        .*)     _fnum='0'"$_fnum" ;;
+        -.*)    _fnum="${_fnum/-./-0.}"
+    esac
+    printf -v "$1" '%s' "$_fnum"
+}
+
+# fixed point mph to km/h conversion: <vnam> <data>
+convMiKm() {
+    # 1,609344 -> fixed point 161
+    local _fnum="${2%%.*}" _ffra="${2#*.}"
+    [ "$_fnum" = "$_ffra" ] && _ffra=0 || _ffra="${_ffra::1}"
+    _fnum="$(((_fnum * 161 + _ffra * 16) / 10))"
+    _fnum="${_fnum::-1}.${_fnum: -1}"           # one decimal place only
+    [ "${_fnum::1}" = '.' ] && _fnum="0$_fnum"
+    printf -v "$1" '%s' "$_fnum"
+}
+
+# ------------------------------------------------------------------------------
+# Query database and publish via MQtt
+# ------------------------------------------------------------------------------
+
+# get sql data: <file> <table> <fields>
+lastRecord() {
+    local ssql
+    system -r -s ssql -e -- sqlite3 "$2" "SELECT $4 FROM $3 WHERE ROWID=(SELECT max(ROWID) FROM $3);"
+    # shellcheck disable=SC2181
+    [ $? = 0 ] || ssql=
+    splitjoin -d '|' -s "$1" -- "$ssql"
+    [ -n "$ssql" ]                                      # return status
+}
+
+# send data to broker, do not repeat equal data
+sendMQTT() {
+    local topi="$1" ; shift
+    local payl="$1" ; shift
+
+    if [ $((DAT_COUNTER % DAT_ALIVE)) = 0 ] ; then      # always send
+        :
+    elif [ "${DAT_MQTTDICT["$topi"]}" = "$payl" ] ; then
+       trace -a -p "mqtt '%s' repeated, do not publish" "$topi"
+       return 0
+    fi
+
+    message -a -p "mqtt %-20s update (%(%Y-%m-%d %H:%M)T)" "'$topi'" -1
+    DAT_MQTTDICT["$topi"]="$payl"
+    # shellcheck disable=SC2145
+    dryrun "mosquitto_pub $@ -t $topi -m ${payl//[[:cntrl:]]/ }" ||
+        system -e -- mosquitto_pub "$@" -t "$topi" -m "$payl"
+}
+
+# ------------------------------------------------------------------------------
+# Format SQL data with Json and send via MQtt
+# ------------------------------------------------------------------------------
+
+# load a data definition: <tag> <array>
+loadItem() {
+    local _item="${DAT_ITEMDICT["$1"]}"
+    trace -a -c 'loadItem' "Tag=$1"
+    splitjoin -d '\n' -s "$2" -- "$_item"
+}
+
+# load select data for a column: <name> <vnam> <data>...
+loadData() {
+    local _indx="${DAT_ITEMDICT["$1:"]}"
+    ((_indx += 3))
+    trace -a -c 'loadData' "Col=$1  value=${!_indx}"
+    printf -v "$2" '%s' "${!_indx}"
+}
+
+# send an entry: <tag> <valu>...
+sendEntr() {
+    local _mtag="$1" _flds _args _data json
+    while [ "$#" -gt 1 ] ; do
+        splitjoin -d ';' -s _flds -- "$2" ; shift
+        loadData "${_flds[0]}" _data "${DAT_RESULT[@]}"
+        case "${_flds[2]}" in
+            C)  convF2C _data "$_data"
+                _args+=('temperature' "$_data") ;;
+            F)  _args+=('temperature' "$_data") ;;
+            K)  convMiKm _data "$_data"
+                _args+=('speed' "$_data") ;;
+            M)  _args+=('speed' "$_data") ;;
+            %)  _args+=('humidity' "$_data") ;;
+            *)  _args+=("${_flds[0],,}" "$_data")
+        esac
+    done
+    makeJSON json "${_args[@]}"
+    sendMQTT "$_mtag" "$json" "${DAT_BROKER[@]}"
+}
+
+# ------------------------------------------------------------------------------
+# Top level: run <arg>...
+# ------------------------------------------------------------------------------
+
+# main loop, run until killed from outside
+run_loop() {
+    message -l "Weewx columns:" "$DAT_COLUMNS"
+
+    # try to enable 'sleep' as builtin (see apt install bash-builtins)
+    enable sleep &>/dev/null
+
+    #local asql tmpi tmpo humi humo json
+    local item ents
+    while : ; do
+                                            # fetch db record
+        if lastRecord DAT_RESULT "$DAT_SQLITE" 'archive' "$DAT_COLUMNS" ; then
+            trace "Data:" "${DAT_RESULT[@]}"
+            for item in "${!DAT_ITEMDICT[@]}" ; do
+                [ "${item/\//}" = "$item" ] && continue
+                loadItem "$item" ents
+                sendEntr "$item" "${ents[@]:1}"
+            done
+        fi
+        ((DAT_COUNTER += 1))                # used in sendMQTT to force send
+        trace -a -p "Sleeping %s [s]" "$DAT_SLEEP"
+        sleep "$DAT_SLEEP"
+    done
+}
+
+# Implementing --show
+run_show() {
+    if [ "${1:--}" != '-' ] && [ -f "$1" ] ; then
+        confirm -n "Replace existing output file" || quit
+    fi
+    case "$CEN_OPT_SHOW" in
+        con*)       showConf "$1" ;;
+        bro*|mqtt)  showMQTT "$1" ;;
+        sys*)       showSysd "$1" ;;
+        yaml)       showYaml "$1" ;;
+    esac
+}
+
+# this is called by mini-bash-lib after option parsing
+run() {
+    if [ "$CEN_OPT_SHOW" ] ; then
+        run_show "$1"
+    else
+        [ -z "$CEN_OPT_RUN$CEN_OPT_HOST" ] &&
+            quit "Don't know what to do, try '$CEN_NAME --help'"
+        makeConfig "$@"
+        system -c -f sqlite3 mosquitto_pub
+        [ -n "$CEN_OPT_DATA" ] && DAT_SQLITE="$CEN_OPT_DATA"
+        [ -f "$DAT_SQLITE" -a -r "$DAT_SQLITE" ] ||
+            quit -e "Not a readable file:" "$DAT_SQLITE"
+        if [ -z "$CEN_OPT_RUN" ] ; then                 # no --run option
+            run_loop
+        else
+            # check logfile
+            [ -n "$CEN_OPT_LOGF" ] && DAT_LOGFILE="$CEN_OPT_LOGF"
+            if [ -n "$DAT_LOGFILE" ] ; then
+                true >> "$DAT_LOGFILE" 2>/dev/null
+                # shellcheck disable=SC2181
+                [ $? = 0 ] || quit -e "Cannot open logfile:" "$DAT_LOGFILE"
+            else
+                DAT_LOGFILE='/dev/null'
+            fi
+
+            # run in background (systemd closes stdout and stderr)
+            {   run_loop & sleep 2
+            } </dev/null &>"$DAT_LOGFILE"
+            disown -h $! || quit -e
+
+            # This is ugly - we want to run in background but mini-bash-lib has
+            # no support for daemons. To avoid that the main shell runs the real
+            # quit() function, we redefine quit() to write a message only ...
+            quit() {  message -l "Running in background" ; }
+        fi
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Custom options
+# ------------------------------------------------------------------------------
+options() {
+    case "$1" in
+    -C|--con*)       optarg  'conf'  -   -t ;;      # text option
+    -D|--dat*)       optarg  'data'  -   -t ;;      # text option
+    -H|--hos*)       optarg  'host'  -   -t ;;      # text option
+    -L|--log*)       optarg  'logf'  -   -t ;;      # text option
+    -R|--run)        optarg  'run'   -   -f ;;      # flag
+    -S|--sho*)       optarg  'show'  -   -t ;;      # text option
+    esac
+}
+
+# ------------------------------------------------------------------------------
+# Usage info
+# ------------------------------------------------------------------------------
+usage() {
+    create -c <<!EOF
+Usage:     (1) $CEN_NAME -R [-L <file>] [-C <conf>]
+           (2) $CEN_NAME -H <host> [-D <fsql>] [---] [<tag> <value>...]...
+           (3) $CEN_NAME -S config|broker|systemd [---] [<file>]
+           (4) $CEN_NAME -S yaml [-C <conf>] [---] [<file>]
+
+           $CEN_TITLE.
+
+           Form (1) enters a run loop using a configuration file, form (2) is
+           for testing and generates the configuration from the command line.
+           Use form (3) and (4) to display or write various configuration data.
+
+           You can use short options like '-C test.conf' or long option names
+           like '--config=test.conf'. The '---' separator is optional unless
+           you have an argument that starts with a '-'.
+
+Options:   -d --dryrun          show what would be done, make no changes
+           -h --help            show this text
+           -q --quiet           report errors only
+           -v --verbose         be verbose (use twice for debug)
+
+           -C --config  <conf>  Specify configuration file (the default is to
+                                try loading '/etc/default/$CEN_NAME')
+           -D --data    <fsql>  Path of a weewx SQLite data base file
+           -L --logfile <file>  Logfile for --run (default is not output)
+           -H --host    <name>  Enter foreground run loop using command line args
+           -R --run             Enter background run loop using a configuration file
+           -S --show            Show or write configuration data
+
+Arguments: <conf>               The configuration file
+           <name>               Host name of Mosquitto MQtt broker
+           <file>               An output path
+
+Configs:   Use the --show option to get configuration help. An output file can
+           be specified (default is output to stdout):
+
+           $CEN_NAME --show config          # weewx2hass config example
+           $CEN_NAME --show broker          # install/configure mosquitto
+           $CEN_NAME --show systemd         # a service example
+
+           To access the mqtt data from Home Assistant some 'sensor' entities
+           must be added to 'configuration.yaml'. Use the following command to
+           a configuration generated from your configuration:
+
+           $CEN_NAME --show yaml --config <conf>
+
+!EOF
+}
+
+# ------------------------------------------------------------------------------
+# mini-bash-lib         for bash 5.x
+# ------------------------------------------------------------------------------
+# shellcheck disable=SC2317
+{
+# shellcheck disable=SC2034
+{
+    CEN_EXIT=0              # exit code
+    CEN_HOOK_QUIT=          # called by quit()
+    CEN_IDNT=               # Flag for indentation
+    CEN_MINI_VERSION='0.01'
+
+    CEN_ARGS=               # option arg count  (0:=error  1:=flag only  2:has value)
+    CEN_ARGOPT=             # potential option argument
+    CEN_ACTARR=             # next cmd line argument
+    CEN_CONFIRM=            # returned by confirm()
+    CEN_OPT_DRYRUN=         # option -d
+    CEN_OPT_FORCE=          # option -f
+
+    CEN_TMP_BASE="${TMPDIR:-/tmp}/$EPOCHSECONDS-$BASHPID-"
+    CEN_TMP_INDX=0
+    CEN_TMP_SYSO=           # temp file for system()
+    CEN_TMPFILE=            # see tmpfile()
+
+    CEN_VERB=1              # option -v  (0:=error only  1:=normal  2:=trace)
+    CEN_YESNO=              # option -n|-y
+}
+
+# some CEN_xxx variables are set in the proxy
+
+# ------------------------------------------------------------------------------
+# all output functions are implemented via message()
+# ------------------------------------------------------------------------------
+
+warning() { message -w "$@" ; }
+error()   { message -e -l "$@" ; }
+fatal()   { message -f -l "$@" ; }
+trace()   { [ "$CEN_VERB" -lt 2 ] && return 0 ; message "$@" ; }
+
+# write a message stderr: [-a|-i] [-m] [-p] [--] <text>...
+message() {
+    local _idnt="$CEN_NAME:" _exit _mesg _olog="$CEN_VERB" _opre _oqui _omul _opri
+    while [ "${1::1}" = '-' ] ; do
+        case "$1" in
+        -)    break ;;
+        --)   shift ; break ;;
+        -a)   [ -n "$CEN_IDNT" ] && _idnt="${_idnt//?/ }" ;;
+        -c)   # printf formatting is not unicode aware ...
+              local _asci _ugly
+              _asci="${2//[[:alpha:]]/.}"               # this is unicode aware
+              printf -v _ugly "%-18s:" "$_asci"         # get correct padding
+              printf -v _opre '%s' "${_ugly/$_asci/$2}" # back to unicode
+              shift ;;
+        -e)   _opre=$"***ERROR***" ; _exit=2 ;;
+        -f)   _opre=$"***FATAL ERROR***" ; _oqui=1 ; _exit=3 ;;
+        -i)   _idnt="${_idnt//?/ }" ;;
+        -l)   _olog=1 ;;
+        -m)   _omul=1 ;;
+        -p)   _opri=1 ;;
+        -q)   [ "$CEN_EXIT" = 0 ] && return 0 ; _oqui=2 ;;
+        -t)   [ "$CEN_EXIT" = 0 ] ; return ;;
+        -w)   _opre=$"***WARNING***" ;;
+        esac ; shift
+    done
+    [ -n "$_exit" ] && { _olog=1 ; CEN_EXIT="$_exit" ; }
+    [ "$_oqui" = 2 ] && quit -e "$@"
+    [ "$_olog" -lt 1 ] && return 0
+    if [ -n "$_omul" ] ; then
+        _omul="$1" ; shift
+        # shellcheck disable=SC2145
+        set -- "$_omul${@/*/$'\n'${_idnt//?/ } &}"
+    fi
+    # shellcheck disable=SC2059
+    [ -z "$_opri" ] && _mesg="$*" || printf -v _mesg "$@"
+    [ -n "$_opre" ] && _mesg="$_opre $_mesg"
+    echo "$_idnt" "$_mesg" >&2
+    CEN_IDNT=1 ; [ -n "$_oqui" ] && quit
+}
+
+# ------------------------------------------------------------------------------
+# various functions
+# ------------------------------------------------------------------------------
+
+# get input: [-a|-i] [-d <dflt>] [-f] [-p -|<info>] [-s <vnam>] [-u] [-y|-n] <text>...
+confirm() {
+    local _ofmt _oupc _what=1 _repl _vnam='CEN_CONFIRM' _idnt="$CEN_NAME:" _info _defn _text
+    while [ "${1::1}" = '-' ] ; do
+        case "$1" in
+        --) shift ; break ;;
+        -a) [ -n "$CEN_IDNT" ] && _idnt="${_idnt//?/ }" ;;
+        -d) shift ; _defn="$1" ;;
+        -f) _ofmt=1 ;;
+        -i) _idnt="${_idnt//?/ }" ;;
+        -n) _what=1 ;;
+        -p) shift ; _what= ; _info="$1" ;;
+        -s) shift ; _vnam="$1" ;;
+        -u) _oupc=1 ;;
+        -y) _what=0
+        esac ; shift
+    done
+    # shellcheck disable=SC2059
+    [ -z "$_ofmt" ] && _text="$*" || printf -v _text "$@"
+
+    # just read text and return it
+    if [ -z "$_what" ] ; then
+        [ "$_info" = '-' ] && _info=': '
+        read -p -r "$_idnt $_text$_info" _repl ; CEN_IDNT=1
+        [ -z "$_repl" ] && _repl="$_defn"
+        [ -z "$_oupc" ] && _repl="${_repl,,}"
+        [ -n "$_vnam" ] && printf -v "$_vnam" '%s' "$_repl"
+        [ -n "$_repl" ] ; return            # return status
+    fi
+
+    # ask a yes/no question
+    local _locy _locn _loqy _loqn _loca=$"yes°no° [Y/n]? ° [y/N]? "
+    IFS='°' read -r _locy _locn _loqy _loqn <<<"$_loca"
+    if [ -z "$CEN_YESNO" ] ; then
+        if [ "$_what" = 0 ] ; then          # yes
+            _defn="$_locy" ; _info="$_loqy"
+        else                                # no
+            _defn="$_locn" ; _info="$_loqn"
+        fi
+        while : ; do
+            read -rp "$_idnt $_text$_info" _repl ; CEN_IDNT=1
+            _repl="${_repl,,}"
+            case "${_repl::1}" in
+            '')             _repl="$_defn" ; break ;;
+            "${_locn::1}")  _repl="$_locn" ; break ;;
+            "${_locy::1}")  _repl="$_locy" ; break
+            esac
+            message -l $"Please enter 'yes' or 'no'"
+        done
+    else
+        [ "$CEN_YESNO" = 'y' ] && _repl="$_locy" || _repl="$_locn"
+    fi
+    [ -n "$_vnam" ] && printf -v "$_vnam" '%s' "$_repl"
+    [ "$_repl" = "$_locy" ]                 # return status
+}
+
+# file output: create [-r] [-t] [-c] [-v <vnam>] [--] <path>|-
+create() {
+    local _rdry _rtru _vnam _fout _darr
+    while [ "${1::1}" = '-' ] ; do
+        case "$1" in
+        --)   shift ; break ;;
+        -c)   _vnam='-' ;;
+        -r)   _rdry='-r' ;;
+        -t)   _rtru=1 ;;
+        -v)   shift ; _vnam="$1"
+        esac ; shift
+    done
+    dryrun $_rdry 'create' "$@" && return 1
+    [ "${1:--}" = '-' ] && _fout='/dev/stdout' || _fout="$1"
+    if [ "${_fout::5}" != '/dev/' ] && [ -e "$_fout" ] ; then
+       if [ -z "$_rtru" ] ; then
+           error $"Existing file:" "$_fout" ; return 1
+       elif ! [ -f "$_fout" -a -w "$_fout" ] ; then
+           remove $_rdry -- "$_fout" || return 1
+       fi
+    fi
+    if [ -z "$_vnam" ] ; then
+        true >"$_fout"
+    else
+        if [ "$_vnam" = '-' ] ; then
+            local _darr ; readarray -t _darr
+        else
+            local -n _darr="$_vnam"
+        fi
+        printf '%s\n' "${_darr[@]}" >"$_fout"
+    fi
+}
+
+# check --dryrun option: [-r] [<mesg>...]
+dryrun() {
+    local _rdry="$CEN_OPT_DRYRUN"
+    while [ "${1::1}" = '-' ] ; do
+        case "$1" in
+        --)   shift ; break ;;
+        -r)   _rdry= ;;
+        esac ; shift
+    done
+
+    if [ -z "$_rdry" ] ; then
+        trace -a -c $"Execute" "$@" ; return 1
+    fi
+    message -a -c $"Skip" "$@" ; return 0
+}
+
+# run another tool using --embed: -m <fake> -a|-s <vnam> <system-opts> <tool> [--] <arg>...
+embed() {
+    local _opts=('--embed' "$CEN_NAME")
+    [ -n "$CEN_OPT_DRYRUN" ] && _opts+=('--dryrun')
+    while [ "${1::1}" = '-' ] ; do
+        case "$1" in
+        --)   shift ; break ;;
+        -m)   return 0 ;;                       # mini-bash-lib has no modules
+        -a|-s)  _opts+=("$1" "$2") ; shift ;;
+        *)    _opts+=("$1")
+        esac ; shift
+    done
+    local _prog="$1" _stat ; shift
+    system -r "$_prog" "${_opts[@]}" -- "$@" ; _stat="$?"
+    [ "$_stat" = 3 ] && quit -s 3 ; return "$_stat"
+}
+
+# create dir, set current dir: [-f|-q] [-m] [-c|-p] [--] <path>
+folder() {
+    local _ochg _omak _oerr='error'
+    while [ "${1::1}" = '-' ] ; do
+        case "$1" in
+        --) shift ; break ;;
+        -c) _ochg='cd' ;;
+        -f) _oerr='fatal' ;;
+        -m) _omak=1 ;;
+        -p) _ochg='cd -P' ;;
+        -q) _oerr=':' ;;
+        esac ; shift
+    done
+    if [ ! -d "$1" ] ; then
+        if [ -n "$_omak" ] ; then
+            system -e -p -- mkdir -p "$1" || return 1
+        else
+            $_oerr $"Is not a folder:" "$1" || return 1
+        fi
+    fi
+    [ -z "$_ochg" ] && return 0
+    # using 'system eval cd ..' to simplify error handling
+    system -r -e -- eval "$_ochg" "$1" || return 1
+    trace -a -c $"Current folder" "$PWD" ; return 0
+}
+
+# handle word split or join: -j|-s <vnam>  [--] <data>...
+# shellcheck disable=SC2206
+# shellcheck disable=SC2059
+splitjoin() {
+    local _splt _join _deli _sifs="$IFS"
+    while [ "${1::1}" = '-' ] ; do
+        case "$1" in
+        --) shift ; break ;;
+        -d) shift ; printf -v _deli "$1" ;;
+        -s) shift ; _splt="$1" ;;
+        -j) shift ; _join="$1" ;;
+        esac ; shift
+    done
+    if [ -n "$_splt" ] ; then
+        [ -z "$_deli" ] && _deli=$'\t\n'
+        local -n _vspl="$_splt"
+        set -f ; IFS="$_deli" ; _vspl=($*) ; set +f
+    elif [ -n "$_join" ] ; then
+        [ -z "$_deli" ] && _deli=$'\t'
+        IFS="$_deli" ; printf -v "$_join" '%s' "$*"
+    fi
+    IFS="$_sifs"
+    return 0
+}
+
+# some simple file-system commands:
+#   copy    [-f|-q] [-r] [-a] [-u] [--] <arg>...
+#   rename  [-f|-q] [-r]           [--] <arg>...
+#   remove  [-f|-q] [-r] [-d] [-o] [--] <arg>...
+#   symlink [-f|-q] [-r] [-n] [-r] [--] <arg>...
+
+copy() { ___cen_simple_cmd 'cp' "$@" ; }        # -a -u
+rename() { ___cen_simple_cmd 'mv' "$@" ; }
+remove() { ___cen_simple_cmd 'rm' "$@" ; }      # -d -o
+symlink() { ___cen_simple_cmd 'ln -s' "$@" ; }  # -n -r
+
+___cen_simple_cmd() {
+    local _oerr='-e -p' _orun _args=("$1") ; shift
+    while [ "${1::1}" = '-' ] ; do
+        case "$1${_args::1}" in
+        --?)    shift ; break ;;
+        -ac)    _args+=('-a') ;;        # cp -a
+        -uc)    _args+=('-u') ;;        # cp -u
+        -dr)    _args+=('-r') ;;        # rm -r
+        -or)    _args+=('--one-file-system') ;;
+        -nl)    _args+=('-f' '-s') ;;   # ln -f
+        -rl)    _args+=('-r') ;;        # ln -r (shadows dryrun -r)
+        -f?)    _oerr='-f -p' ;;
+        -q?)    _oerr='-q' ;;
+        -r?)    _orun=1 ;;
+        esac ; shift
+    done
+    # shellcheck disable=SC2086
+    system $_oerr $_orun -- "${_args[@]}" "$@"
+}
+
+# run a command: <opt>... [--] <cmd> <arg>...
+system() {
+    local _stat _mesg=':' _rdry _fchk _onam _ored _otyp
+    # _ored (output redir)  '': none  0: /dev/null   1: stdout+err  2: stderr only
+    # _otyp (output dest)   '': none  0: error only  1: to string   2: to array
+    while [ "${1::1}" = '-' ] ; do
+        case "$1" in
+        --)   shift ; break ;;
+        -a)   shift ; _onam="$1" ; _ored=1 ; _otyp=2 ;;
+        -c)   _fchk=1 ;;
+        -e)   _mesg='error' ;;
+        -f)   _mesg='fatal' ;;
+        -p)   _ored=1 ; [ -z "$_otyp" ] && _otyp=0 ;;
+        -q)   _ored=0 ;;
+        -r)   _rdry='-r' ;;
+        -s)   shift ; _onam="$1" ; _ored=1 ; _otyp=1 ;;
+        -t)   [ "$CEN_EXIT" = 0 ] || return 1 ;;
+        -w)   _mesg='warning' ;;
+        -z)   _ored=2 ; [ -z "$_otyp" ] && _otyp=0 ;;
+        esac ; shift
+    done
+    if [ -n "$_fchk" ] ; then
+        _stat=0
+        for _fchk in "$@" ; do
+            type -t "$_fchk" &>/dev/null && continue
+            $_mesg -- $"Command not found:" "$_fchk" ; _stat=127
+        done
+        return "$_stat"
+    fi
+    dryrun $_rdry "$@" && return 1
+
+    [ -n "$_otyp" -a -z "$CEN_TMP_SYSO" ] && tmpfile -r -s CEN_TMP_SYSO
+    case "$_ored" in
+    0)  "$@" &>/dev/null ; return ;;                    # return status
+    1)  "$@" &>"$CEN_TMP_SYSO" ; _stat=$? ;;
+    2)  "$@" 2>"$CEN_TMP_SYSO" ; _stat=$? ;;
+    *)  "$@" ; _stat=$?
+    esac
+    [ "$_stat" = 0 -a -z "$_onam" ] && return 0         # output ignored
+
+    # shellcheck disable=SC2015
+    [ "$_otyp" = 2 ] && local -n _vsys="$_onam" || local _vsys
+    readarray -t _vsys <"$CEN_TMP_SYSO"
+    [ "$_otyp" = 1 ] && splitjoin -j "$_onam" -- "${_vsys[@]}"
+    [ "$_stat" = 0 ] && return 0
+
+    $_mesg -p $"Execution of '%s' failed (status %s)" "$1" "$_stat"
+    [ "${_ored:-0}" != 0 ] && message -i -m "${_vsys[@]}"
+    return "$_stat"
+}
+
+# create transient file: [-r] [-s <vnam>]
+tmpfile() {
+    local _vtmp='CEN_TEMPFILE' _rdry
+    local _temp="$CEN_TMP_BASE$CEN_TMP_INDX-$BASHPID"
+    ((CEN_TMP_INDX += 1))
+    while [ "${1::1}" = '-' ] ; do
+        case "$1" in
+        -r)   _rdry='-r' ;;
+        -s)   shift ; _vtmp="$1" ;;
+        esac ; shift
+    done
+    printf -v "$_vtmp" '%s' "$_temp"
+    dryrun $_rdry $"Temporary file" "$_temp" && return 1
+ }
+
+# ------------------------------------------------------------------------------
+# main and quit
+# ------------------------------------------------------------------------------
+# shellcheck disable=SC2034
+main() {
+    # set app name and feature defaults if not yet set (by proxy)
+    if [ "${CEN_NAME:--}" = '-' ] ;then
+         CEN_NAME="${BASH_ARGV0##*/}"
+         CEN_FEATURE_F=1 ; CEN_FEATURE_Y=1
+    fi
+    # minimalistic option parsing ('---' or '--' stop the parser)
+    local _opts=':' ; PATH=' ' type -t 'options' &>/dev/null && _opts='options'
+    while [ "${1::1}" = '-' ] ; do
+        CEN_ARGS= ; CEN_ARGOPT= ; CEN_ACTION="$1" ; CEN_ACTARR="$2"
+        case "$1" in
+            --*=*)       CEN_ARGOPT="${1#*=}" ; CEN_ACTION="${1%%=*}" ;;
+            -[^-]*)      CEN_ARGOPT="${1:2}"  ; CEN_ACTION="${1::2}" ;;
+            --|---)      shift ; break ;;
+        esac
+        $_opts "$CEN_ACTION" "${CEN_ARGOPT:-$2}"
+        [ -z "$CEN_ARGS" ] && CEN_ARGS=1 && case "$CEN_ACTION" in
+            -d|--dry*)   CEN_OPT_DRYRUN=1 ;;
+            -f|--for*)   [ -n "$CEN_FEATURE_F" ] && CEN_OPT_FORCE=1 || CEN_ARGS=0 ;;
+            -h|--help)   PATH=' ' type -t usage &>/dev/null && { usage >&2 ; quit -s 2 ; }
+                         quit $"Option '--help' is not implemented" ;;
+            -n|--no)     [ -n "$CEN_FEATURE_Y" ] && CEN_YESNO='n' || CEN_ARGS=0 ;;
+            -q|--qui*)   CEN_VERB=0 ;;
+            -v|--ver*)   CEN_VERB=2 ;;
+            -y|--yes)    [ -n "$CEN_FEATURE_Y" ] && CEN_YESNO='y' || CEN_ARGS=0 ;;
+            --embed)     optarg - CEN_NAME -t ;;
+            --info)      quit -p "mini-bash-lib $CEN_MINI_VERSION; '%s'; %s" "$CEN_VERSION" \
+                                 "${CEN_LEGAL:-$"<unknown Author/Licence>"}" ;;
+            --mini*)     ;;
+            --trace)     set -x ;;
+            *)           CEN_ARGS=
+        esac
+        [ "${CEN_ARGS:-0}" -lt 1 ] && quit -e $"Unknown option:" "$1"
+        [ "$CEN_ARGS" -gt $# ] && CEN_ARGS="$#" ; shift "$CEN_ARGS"
+    done
+    CEN_ACTARR= ; CEN_ARGOPT= ; CEN_ACTION= ; $_opts    # end of option parsing
+    PATH=' ' type -t run &>/dev/null || return 2 ; run "$@"
+}
+
+# get option setting: <name> <vnam>|- [-t|-f] [<value>]
+optarg() {
+    local _name="${2:--}" ; [ "$_name" = '-' ] && _name="CEN_OPT_${1^^}"
+    case "${3:--f}" in
+    -f) printf -v "$_name" '%s' "${4:-1}" ; CEN_ARGS=1 ;;
+    *)  if [ -z "$CEN_ARGOPT" ] ; then
+            [ "$CEN_ACTARR" != '-' -a "${CEN_ACTARR::1}" = '-' ] &&
+                quit -e "Missing option value:" "--$1"
+            CEN_ARGS=2 ; CEN_ARGOPT="$CEN_ACTARR"
+        else
+            CEN_ARGS=1
+        fi
+        [ "$CEN_ARGOPT" = '-' ] && CEN_ARGOPT="${4:--}" ; printf -v "$_name" '%s' "$CEN_ARGOPT"
+    esac
+}
+
+# terminate script: [-a|-i] [-p] [-s <code>] [-e|-t|-u] [--] <text>...
+quit() {
+    local _opts=() _term
+    while [ "${1::1}" = '-' ] ; do
+        case "$1" in
+        -)  break ;;
+        --) shift ; break ;;
+        -s) shift ; CEN_EXIT="$1" ;;
+        -e) _term=$"Terminated after error" ; CEN_EXIT=1 ; _opts+=('-e') ;;
+        -t|-u) _term=$"Terminated" ; CEN_EXIT=4 ;;
+        *)  _opts+=("$1") ;;
+        esac ; shift
+    done
+
+    type -t "$CEN_HOOK_QUIT" &>/dev/null && "$CEN_HOOK_QUIT" "$@"
+    if [ -n "$_term" ] ; then
+        if [ $# = 0 ] ;       then set -- "$_term"
+        elif [ "$*" = '-' ] ; then set --
+        elif [ "$1" = '-' ] ; then set -- "$_term""${2:+:}" "${@:2}"
+        fi
+    fi
+    [ -n "$*" ] && message "${_opts[@]}" "$@"
+    [ "$CEN_TMP_INDX" != 0 -a -n "$CEN_TMP_BASE" ] && system -q -r -- rm -f "$CEN_TMP_BASE"*
+    trace -a "quit STATUS=$CEN_EXIT" ; exit "$CEN_EXIT"
+}
+
+# ------------------------------------------------------------------------------
+# command not found runs in a sub-shell, must call quit() indirectly via signal
+# ------------------------------------------------------------------------------
+command_not_found_handle() {
+    message -l $"***ABORT***" $"Command not found:" "$1"
+    set +xeE ; kill -42 $$              # send signal to main shell
+}
+
+# shellcheck disable=SC2172
+trap 'trap 42; quit -s 127' 42          # quit from main shell
+}
+main "$@" ; quit
+
+# End
