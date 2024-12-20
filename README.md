@@ -6,12 +6,12 @@ Yaml format. Finally a systemd service file can be generated.
 
 Load the full version from github (everything is in one bash script):
 
-        wget github.com/j-pfennig/weewx2hass/blob/main/weewx2hass 
+        wget raw.githubusercontent.com/j-pfennig/weewx2hass/refs/heads/main/weewx2hass
 
 The is a simplified non-configurable version of this script that may help you
 to understand how it works:
 
-        wget github.com/j-pfennig/weewx2hass/blob/main/weewx2hass-temp-only
+        wget raw.githubusercontent.com/j-pfennig/weewx2hass/refs/heads/main/weewx2hass-temp-only
 
 This script uses an embedded version of 'mini-bash-lib'. This is not relevant
 for using it, but for the curious:
