@@ -1,0 +1,38 @@
+# /etc/default/weewx2hass
+
+### EXAMPLE ###
+
+### weewx database path (must be SQLite) ###
+
+SQLITE='/var/lib/weewx/weewx.sdb'
+
+### mosquitto_pub arguments (-t and -m are added automatically) ###
+
+# Either a single word, which translates to '-h <host>' or a list of words
+# which will be added literally to the argument list:
+
+    BROKER='raspi1.at.home'
+#   BROKER='-h raspi1 -p 1883 -u whoever'
+
+### list of data items ###
+
+# The list syntax is: <items> := <entry>...
+#                     <entry> := <tag> <value>...
+#                     <tag>   := <word>[/<word>]...
+#                     <value> := <colum>;<label>[;<unit>]
+#
+#                     <colum>       # name of any field in table 'archive'
+#                     <lable>       # a short description
+#                     <unit>        # C convert to °C and set class Temperature
+#                                   # F set Temperature
+#                                   # K convert mph to km/h and set class Speed
+#                                   # pass literally
+# Home Assistant entity names are generated automatically from <label>
+
+ITEMS=(weewx/inside  'inTemp;Temperatur Innen;C' 'inHumidity;Luftfeuchte Innen;%'
+       weewx/outside 'outTemp;Temperatur Außen;C' 'inHumidity;Luftfeuchte Außen;%'
+       weewx/wind    'windSpeed;Windgeschwindigkeit;K'
+       weewx/gust    'windGust;Böengeschwindigkeit,K')
+
+# End
+

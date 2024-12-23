@@ -606,7 +606,7 @@ Configs:   Use the --show option to get configuration help. An output file can
 # ------------------------------------------------------------------------------
 
 warning() { message -w "$@" ; }
-error()   { message -e -l "$@" ; }
+error()   { message -e -l "$@" ; return "$CEN_EXIT" ; }
 fatal()   { message -f -l "$@" ; }
 trace()   { [ "$CEN_VERB" -lt 2 ] && return 0 ; message "$@" ; }
 
@@ -731,16 +731,18 @@ create() {
            remove $_rdry -- "$_fout" || return 1
        fi
     fi
-    if [ -z "$_vnam" ] ; then
-        true >"$_fout"
+    _cen_create_file "$_fout" || return 1
+    [ -z "$_vnam" ] && return 0
+    if [ "$_vnam" = '-' ] ; then
+        local _darr ; readarray -t _darr
     else
-        if [ "$_vnam" = '-' ] ; then
-            local _darr ; readarray -t _darr
-        else
-            local -n _darr="$_vnam"
-        fi
-        printf '%s\n' "${_darr[@]}" >"$_fout"
+        local -n _darr="$_vnam"
     fi
+    printf '%s\n' "${_darr[@]}" >"$_fout"
+}
+
+_cen_create_file() {
+    true >"$1" 2>/dev/null && return 0 ; error $"Failed to create file:" "$1"
 }
 
 # check --dryrun option: [-r] [<mesg>...]
@@ -806,25 +808,23 @@ folder() {
 # shellcheck disable=SC2206
 # shellcheck disable=SC2059
 splitjoin() {
-    local _splt _join _deli _sifs="$IFS"
+    local _sopt _deli
     while [ "${1::1}" = '-' ] ; do
         case "$1" in
         --) shift ; break ;;
         -d) shift ; printf -v _deli "$1" ;;
-        -s) shift ; _splt="$1" ;;
-        -j) shift ; _join="$1" ;;
+        -s) shift ; local -n _vjsx="$1" ; _sopt=1 ;;
+        -j) shift ; local -n _vjsx="$1" ; _sopt=2 ;;
         esac ; shift
     done
-    if [ -n "$_splt" ] ; then
-        [ -z "$_deli" ] && _deli=$'\t\n'
-        local -n _vspl="$_splt"
-        set -f ; IFS="$_deli" ; _vspl=($*) ; set +f
-    elif [ -n "$_join" ] ; then
-        [ -z "$_deli" ] && _deli=$'\t'
-        IFS="$_deli" ; printf -v "$_join" '%s' "$*"
-    fi
-    IFS="$_sifs"
-    return 0
+    case "$_sopt" in
+    1)  [ -z "$_deli" ] && _deli=$'\t\n'
+        local _sifs="$IFS"
+        set -f ; IFS="$_deli" _vjsx=($*) ; set +f ; IFS="$_sifs" ;;
+    2)  [ -z "$_deli" ] && _deli=$'\t'
+        printf -v _vjsx "${_deli::1}%s" "$@" ; _vjsx="${_vjsx:1}" ;;
+    *)  return 1
+    esac ; return 0
 }
 
 # some simple file-system commands:
@@ -833,12 +833,12 @@ splitjoin() {
 #   remove  [-f|-q] [-r] [-d] [-o] [--] <arg>...
 #   symlink [-f|-q] [-r] [-n] [-r] [--] <arg>...
 
-copy() { ___cen_simple_cmd 'cp' "$@" ; }        # -a -u
-rename() { ___cen_simple_cmd 'mv' "$@" ; }
-remove() { ___cen_simple_cmd 'rm' "$@" ; }      # -d -o
-symlink() { ___cen_simple_cmd 'ln -s' "$@" ; }  # -n -r
+copy() { _cen_simple_cmd 'cp' "$@" ; }        # -a -u
+rename() { _cen_simple_cmd 'mv' "$@" ; }
+remove() { _cen_simple_cmd 'rm' "$@" ; }      # -d -o
+symlink() { _cen_simple_cmd 'ln -s' "$@" ; }  # -n -r
 
-___cen_simple_cmd() {
+_cen_simple_cmd() {
     local _oerr='-e -p' _orun _args=("$1") ; shift
     while [ "${1::1}" = '-' ] ; do
         case "$1${_args::1}" in
@@ -911,17 +911,20 @@ system() {
 
 # create transient file: [-r] [-s <vnam>]
 tmpfile() {
-    local _vtmp='CEN_TEMPFILE' _rdry
+    local _vtmp='CEN_TEMPFILE' _rdry _crea=1
     local _temp="$CEN_TMP_BASE$CEN_TMP_INDX-$BASHPID"
     ((CEN_TMP_INDX += 1))
     while [ "${1::1}" = '-' ] ; do
         case "$1" in
+        -n)   _crea= ;;
         -r)   _rdry='-r' ;;
         -s)   shift ; _vtmp="$1" ;;
         esac ; shift
     done
     printf -v "$_vtmp" '%s' "$_temp"
+    [ -z "$_crea" ] && return 0
     dryrun $_rdry $"Temporary file" "$_temp" && return 1
+    _cen_create_file "$_temp"                           # return status
  }
 
 # ------------------------------------------------------------------------------

@@ -1,125 +1,255 @@
 #!/usr/bin/bash
-CEN_LEGAL="Copyright Dr. J. Pfennig (c) 2024; BSD License"
-CEN_TITLE="Foreward Temperature Data from WeeWX to Home Assistant via MQtt"
+CEN_LEGAL="Copyright <anonymous> (c) 2024; <unknown> License"
+CEN_TITLE="Monitor for weewx2hass data, simple ASCII-art clock"
 
 # declare global variables ...
 
-DAT_SQLITE='/var/lib/weewx/weewx.sdb'
-DAT_BROKER=('-h' 'localhost')
+CEN_OPT_ASCII=                  # see --ascii
+CEN_OPT_CLOCK=                  # see --extra
+CEN_OPT_HOST='localhost'        # see --host
+CEN_OPT_INDENT='2,0'            # see --indent
 
-DAT_SLEEP=120                       # sleep time between polls
-DAT_ALIVE=5                         # update MQtt at least every <n> polls
-DAT_COUNTER=1                       # data base poll counter
+                                # List of tag options for subscribe
+DAT_MQTOPICS=('-t' 'weewx/inside' '-t' 'weewx/outside')
 
-declare -A DAT_MQTTDICT             # used to suppress extra mqtt pub calls
+DAT_SERIALIZER=                 # PID of serializer sub shell
+DAT_SUBSCRIBER=                 # PID of subscriber child process
+DAT_MQTTPIPE=                   # pipe for MQtt Payload data
+DAT_MQTTDATA=                   # serialized subscription data
+DAT_UPDATED=                    # update timestamp
+DAT_COUNTER=0                   # simple update counter
+DAT_POLLMOD=10                  # modulo for file polling
+DAT_FONT=                       # toilet font
+declare -A DAT_DICTDATA         # to serialize/deserialize
 
 # ------------------------------------------------------------------------------
-# Payload
+# Background processes/sub-shells
 # ------------------------------------------------------------------------------
 
-# get sql data: <file> <table> <fields>
-lastRecord() {
-    local ssql
-    system -r -s ssql -e -- sqlite3 "$2" "SELECT $4 FROM $3 WHERE ROWID=(SELECT max(ROWID) FROM $3);"
-    # shellcheck disable=SC2181
-    [ $? = 0 ] || ssql=
-    splitjoin -d '|' -s "$1" -- "$ssql"
-    [ -n "$ssql" ]                              # return status
+# MQtt subscription starts in a sub-shell; exec replaces useless bash
+subscriber() {
+    # CEN_OPT_HOST is not quoted to allow extra parameters ...
+    exec mosquitto_sub -h $CEN_OPT_HOST -F "%t %p" "${DAT_MQTOPICS[@]}"
 }
 
-# create a JSON data record: <vnam> [<key> <value>]...
-makeJSON() {
-    local _vnam="$1" _jitm _jsep _jdat _jval ; shift
-    while [ "$#" -gt 0 ] ; do
-        _jval="${2%[[::space::]]*}"             # remove trailing whitespace
-        [ "$#" -gt 2 ] && _jsep=',' || _jsep=
-        printf -v _jitm '"%s": "%s"%s\n' "$1" "$_jval" "$_jsep" 
-        _jdat+="$_jitm" ; shift ; shift
+# saving payload data to a file runs in a sub-shell (not calling quit)
+serializer() {
+    local mesg mtag last
+    while read mesg ; do
+        # trace -c 'serializer' -a -- "$mesg"
+        case "$mesg" in
+            */*{)   mtag="${mesg%% *}" ;;
+            *})     mtag= ;;
+            *)      [ -z "$mtag" ] && continue
+                    mesg="${mesg%\",}" ; mesg="${mesg/\": / }" ; mesg="${mesg//\"/}"
+                    DAT_DICTDATA["$mtag/${mesg%% *}"]="${mesg#* }"
+                    mesg="${DAT_DICTDATA[@]@A}" ; mesg="${mesg#* -A }"
+                    if [ "$last" = "$mesg" ] ; then
+                        trace -a -c 'serializer' "Data not changed"
+                    else
+                        last="$mesg"
+                        trace -a -c 'serializer' "${mesg#*=}"
+                        echo "$mesg" >"$DAT_MQTTDATA"
+                    fi
+        esac
+    done <"$DAT_MQTTPIPE"
+    exit 1                                  # must not call quit
+}
+
+# ------------------------------------------------------------------------------
+# Display updates
+# ------------------------------------------------------------------------------
+
+DAT_UPDATE_HHMM=            # time in HHMM format
+DAT_UPDATE_YYMD=            # ISO date and localized weekday
+DAT_OUTPUT_HHMM=
+DAT_OUTPUT_YYMD=
+DAT_OUTPUT_TEMP=
+DAT_OUTPUT_CLEAR=
+
+# used by main bash instance to load data written by serializer()
+update_data() {
+    if ((DAT_COUNTER % DAT_POLLMOD)) ; then                 # run only every DAT_POLLMOD sec.
+        # trace -a "Skip:" "No data check"
+        return 1
+    elif ! [ "$DAT_MQTTDATA" -nt "$DAT_UPDATED" ] ; then    # run only on data update
+        return 1
+    fi
+    source "$DAT_MQTTDATA"
+    [ "${#DAT_DICTDATA[@]}" = 0 ] && return 1
+    trace -a -c 'update_data' "${#DAT_DICTDATA[@]} items"
+    true >"$DAT_UPDATED"                                    # update timestamp
+    return 0
+}
+
+# Clock mockup, run toilet after updates, dump to console
+update_clock() {
+    local tnow="$EPOCHSECONDS" hhmm scnd yymd fupd line
+    # printf -v scnd '%(%S)T' "$tnow"                       # unused in this demo
+    printf -v hhmm '%(%H%M)T' "$tnow"
+    printf -v yymd '%(%Y-%m-%d %A)T' "$tnow"
+
+    [ -n "$CEN_OPT_ASCII" ] && DAT_FONT='ascii' || DAT_FONT='mono'
+
+    if [ "$hhmm" != "$DAT_UPDATE_HHMM" ] ; then
+        DAT_UPDATE_HHMM="$hhmm" ; fupd=1
+        system -f -a DAT_OUTPUT_HHMM -- toilet -f "big${DAT_FONT}12" -t -- \
+                     "${DAT_UPDATE_HHMM::2}:${DAT_UPDATE_HHMM:2}"
+    fi
+    if [ "$yymd" != "$DAT_UPDATE_YYMD" ] ; then
+        DAT_UPDATE_YYMD="$yymd" ; fupd=1
+        system -f -a DAT_OUTPUT_YYMD -- toilet -f "sm${DAT_FONT}9" -t -- \
+                     "${DAT_UPDATE_YYMD#* } ${DAT_UPDATE_YYMD% *}"
+    fi
+    if update_data || [ -z "$DAT_OUTPUT_TEMP" ] ; then
+        fupt=1
+        local tmp1="${DAT_DICTDATA["${DAT_MQTOPICS[1]}/temperature"]}"
+        local tmp2="${DAT_DICTDATA["${DAT_MQTOPICS[3]}/temperature"]}"
+        printf -v line '%5s°  %5s°' "${tmp1:---.-}" "${tmp2:---.-}"
+        system -f -a DAT_OUTPUT_TEMP -- toilet -f sm${DAT_FONT}12 -t -- "$line"
+
+    fi
+    [ -z "$fupd" ] && return
+
+    local icol="${CEN_OPT_INDENT%[!0-9]*}" irow="${CEN_OPT_INDENT#*[!0-9]}"
+    printf -v icol "%${icol:-0}s"
+    echo -n "$DAT_OUTPUT_CLEAR"
+    while [ "${irow:-0}" -gt 0 ] ; do
+        echo ; ((irow -= 1))
     done
-    printf -v "$_vnam" '{\n%s}\n' "$_jdat"
+    for line in "${DAT_OUTPUT_HHMM[@]:3:13}" ; do echo "$icol            $line" ; done
+    for line in "${DAT_OUTPUT_YYMD[@]}"      ; do echo "$icol$line" ; done
+    for line in "${DAT_OUTPUT_TEMP[@]:1:6}"  ; do echo "$icol   $line" ; done
+                                               echo -n "$icol   ${DAT_OUTPUT_TEMP[7]}  "
 }
 
-# fixed point F to C° conversion: <vnam> <data>
-convF2C() {
-    local _fnum="${2%%.*}" _ffra="${2#*.}"
-    [ "$_fnum" = "$_ffra" ] && _ffra='0' || _ffra="${_ffra::1}"
-    # rounding is ceil(), might do better emulating round()
-    _fnum="$(((_fnum * 100 + _ffra * 10 - 3195) / 18 ))"
-    _fnum="${_fnum::-1}.${_fnum: -1}"           # one decimal place only
-    case "$_fnum" in                            # make sure to have leading 0
-        .*)     _fnum='0'"$_fnum" ;;
-        -.*)    _fnum="${_fnum/-./-0.}"
-    esac
-    printf -v "$1" '%s' "$_fnum"
+# Montor mode, simple text messages
+update_text() {
+    local tnow="$EPOCHSECONDS" hhmm
+    printf -v hhmm '%(%H%M)T' "$tnow"
+    if [ "$hhmm" != "$DAT_UPDATE_HHMM" ] ; then
+        DAT_UPDATE_HHMM="$hhmm"
+        message "Time:" "${hhmm::2}:${hhmm:2}"
+    fi
+    update_data || return
+    local dat1="${DAT_DICTDATA["${DAT_MQTOPICS[1]}/temperature"]}"
+    local dat2="${DAT_DICTDATA["${DAT_MQTOPICS[3]}/temperature"]}"
+    message -p "MQtt: Temperatures   %6s°  %6s°" "${dat1:---.-}" "${dat2:---.-}"
+    dat1="${DAT_DICTDATA["${DAT_MQTOPICS[1]}/humidity"]}"
+    dat2="${DAT_DICTDATA["${DAT_MQTOPICS[3]}/humidity"]}"
+    [ -n "$dat1$dat2" ] &&
+        message -a -p "      Humidity %12s%%  %6s%%" "${dat1:---.-}" "${dat2:---.-}"
 }
 
-# send data to broker, do not repeat equal data
-sendMQTT() {
-    local topi="$1" ; shift
-    local payl="$1" ; shift
+# ------------------------------------------------------------------------------
+# Main loop
+# ------------------------------------------------------------------------------
+run() {
+    local item updt='update_text'
+    message "Starting up..."
 
-    if [ $((DAT_COUNTER % DAT_ALIVE)) = 0 ] ; then      # always send
-        :
-    elif [ "${DAT_MQTTDICT["$topi"]}" = "$payl" ] ; then
-       trace -a -p "mqtt '%s' repeated, do not publish" "$topi"
-       return 0
+    # check pre requisites
+    system -c -f mosquitto_sub
+    if [ -n "$CEN_OPT_CLOCK" ] ; then
+        system -c -f toilet clear
+        system -f -s DAT_OUTPUT_CLEAR -- clear
+        updt='update_clock'
     fi
 
-    message -a -p "mqtt %-20s update (%(%Y-%m-%d %H:%M)T)" "'$topi'" -1
-    DAT_MQTTDICT["$topi"]="$payl"
-    # shellcheck disable=SC2145
-    dryrun "mosquitto_pub $@ -t $topi -m ${payl//[[:cntrl:]]/ }" ||
-        system -e -- mosquitto_pub "$@" -t "$topi" -m "$payl"
-}
+    for item in 1 2 3 15 ; do
+        trap 'echo ; quit "Terminating..."' "$item"
+    done
 
-# main loop, running until killed from outside
-run() {
-    local asql tmpi tmpo humi humo json
+    # launch MQtt subscriber using a pipe for payload data
+    tmpfile -r -n -s DAT_MQTTPIPE || quit
+    system -e -p -- mkfifo "$DAT_MQTTPIPE" ; error -q
+    subscriber >"$DAT_MQTTPIPE" & DAT_SUBSCRIBER=$!
+
+    # start the serializer sub shell
+    tmpfile -r -s DAT_UPDATED || quit
+    tmpfile -r -s DAT_MQTTDATA || quit
+    serializer & DAT_SERIALIZER=$!
+
+    # try to enable 'sleep' as builtin (see apt install bash-builtins)
+    enable sleep &>/dev/null
+
+    if [ $# != 0 ] ; then
+        DAT_MQTOPICS=()
+        for item in "$@" ; do
+            DAT_MQTOPICS+=('-t' "$item")
+        done
+    fi
+
+    # check if sub-shells are alive
+    trace -a -p "PIDs  subscriber=%s  serializer=%s" "$DAT_SUBSCRIBER" "$DAT_SERIALIZER"
+    sleep 3                      # give them time to initialize
+    kill -0 "$DAT_SUBSCRIBER" &>/dev/null || quit -e "Subscriber process died"
+    kill -0 "$DAT_SERIALIZER" &>/dev/null || quit -e "Serializer process died"
+    error -q
+
+    message "Running (use ^C to stop)..."
     while : ; do
-                                            # fetch db record
-        if lastRecord asql "$DAT_SQLITE" 'archive' \
-                                         'inTemp, inHumidity, outTemp, outHumidity' ; then 
-            trace "Data:" "${asql[@]}"
-                                            # inside data
-            convF2C tmpi "${asql[0]}" ; humi="${asql[1]}" 
-            makeJSON json 'temperature' "$tmpi" 'humidity' "$humi"
-            sendMQTT 'weewx/inside' "$json" "${DAT_BROKER[@]}"
-                                            # outside data
-            convF2C tmpo "${asql[2]}" ; humo="${asql[3]}"
-            makeJSON json 'temperature' "$tmpo" 'humidity' "$humo"
-            sendMQTT 'weewx/outside' "$json" "${DAT_BROKER[@]}"
-        fi
-
-        ((DAT_COUNTER += 1))                # used in sendMQTT to force send
-        trace -a -p "Sleeping %s [s]" "$DAT_SLEEP"
-        sleep "$DAT_SLEEP"
+        ((DAT_COUNTER += 1))
+        sleep 1 ; $updt                 # call update_text or update_clock
     done
 }
 
 # ------------------------------------------------------------------------------
-# Usage info
+# Custom options
 # ------------------------------------------------------------------------------
+options() {
+    case "$1" in
+    -A|--asc*)      optarg 'ascii'  -   -f ;;       # flag
+    -C|--clo*)      optarg 'clock'  -   -f ;;       # flag
+    -H|--hos*)      optarg 'host'   -   -t ;;       # text option
+    -I|--ind*)      optarg 'indent' -   -t ;;       # text option
+    esac
+}
+
+
 usage() {
     create -c <<!EOF
-Usage:     $CEN_NAME [-d] [-q|-v] [-h]
+Usage:     $CEN_NAME [-d|-h] [-v|-q]
+                     [-A] [-C] [-H <host>] [-I <idnt> [---] <topic>...
 
-           $CEN_TITLE.
-
-           This is a simplified version of 'weewx2hass'. The configuration is
-           hard-coded in the script and only temperature data gets forewarded.
+           $CEN_TITLE.  With
+           option '--clock' it displays time, date and two temperatures
+           The later is a mockup and test for 'centauriclock'.
 
 Options:   -d --dryrun          show what would be done, make no changes
            -h --help            show this text
            -q --quiet           report errors only
-           -v --verbose         be verbose (use twice for debug)
+           -v --verbose         be verbose
 
-Arguments: -none-               no arguments expected
+           -A --ascii           use pure ASCII (for console screen font)
+           -C --clock           clock mockup, inside/outside temperature
+           -H --host    <host>  MQtt host name (+ options if needed)
+           -I --indent  <idnt>  indent clock by columns/rows
+
+Arguments: <host>               mosquitto_sub arguments, see example
+           <idnx>               <cols>.<rows>, see example
+           <topic>              topics to subscribe to. Should contain a
+                                'temporature' field in payload. All other
+                                fields ignored. Must be in JSON format.
+
+Examples:   # use -H to pass <host> and options to mosquitto_sub
+            $CEN_NAME -v -H 'raspi1.at.home -p 1883 -u otto'
+            $CEN_NAME -H 'raspi1'
+
+            # the default options/arguments are:
+            $CEN_NAME -H 'localhost' weewx/inside weewx/outside
+
+            # run in clock mode:
+            $CEN_NAME -q -H 'raspi1' -C
+            $CEN_NAME -C -A -I 40.12
+
+            # it may take a while until MQtt data gets updated and shown
 
 !EOF
 }
 
 # ------------------------------------------------------------------------------
-# mini-bash-lib         for bash 5.x
+# mini-bash-lib         implementation
 # ------------------------------------------------------------------------------
 # shellcheck disable=SC2317
 {
@@ -570,6 +700,8 @@ command_not_found_handle() {
 # shellcheck disable=SC2172
 trap 'trap 42; quit -s 127' 42          # quit from main shell
 }
+
+# Call run() after option parsing
 main "$@" ; quit
 
 # End

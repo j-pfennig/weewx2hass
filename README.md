@@ -32,3 +32,5 @@ Try these commands to make it work:
 
         apt install sqlite3 mosquitto mosquitto-clients     # install dependencies
 
+'weewx2watch' is a monitor tool and a simple ASCII-art digital clock that can
+show inside/outside temperatures. See 'weewx2watch --help' for details.
