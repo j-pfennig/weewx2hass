@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-CEN_LEGAL="Copyright <anonymous> (c) 2024; <unknown> License"
+CEN_LEGAL="Copyright Dr. J. Pfennig (c) 2024; BSD License"
 CEN_TITLE="Monitor for weewx2hass data, simple ASCII-art clock"
 
 # declare global variables ...
@@ -32,29 +32,109 @@ subscriber() {
     exec mosquitto_sub -h $CEN_OPT_HOST -F "%t %p" "${DAT_MQTOPICS[@]}"
 }
 
+# helper for parsing: <expr> <data> [<mext>]|- [<merr>]|- <vnam>...
+___regexp() {
+    if [[ "$2" =~ $1 ]] ; then
+        [ "$2" != "$BASH_REMATCH" ] && [ "${3:--}" != '-' ] &&
+            trace -a -c 'json parser' -- "$3" "'${2/$BASH_REMATCH/ ... }'"
+        [ $# -le 4 ] && return 0
+        shift 4 ; local indx=1
+        while [ $# != 0 ] ; do
+            [ "${1:--}" = '-' ] || printf -v "$1" '%s' "${BASH_REMATCH[indx]}"
+            shift ; ((indx += 1))
+        done
+        return 0
+    fi
+    [ "${3:--}" != '-' ] && trace -a -c 'json parser' -- "$4"
+    return 1
+}
+
+# simple JSON parser that understands only key/value entries
+___parser() {
+    # <obj>
+    local jlst='[[:space:]]*\{[[:space:]]*(.*)*\}[[:space:]]*'
+    # <key> <separator> <remainder>
+    local jelt='[[:space:],]*\"([^\"]+)\"[[:space:]]*([:,])?[[:space:]]*(.*)'
+    # <value> <quoted> <plain> <remainder>
+    local jval='(\"([^\"]*)\"|([^[:space:]\"]*))[[:space:]]*(.*)'
+
+    local dstr dkey ddel dall dquo dpln
+    # step 1: isolate the object content
+    ___regexp "$jlst" "$2" "Extra chars" "No JSON object" dstr || return
+    trace -c 'json parser doc' -a -- "$1" "${dstr//[[:space:]]/ }"
+    while : ; do
+        [ -z "${dstr//[[:space:]]/}" ] && return
+        # trace -a -c 'json parser' "'$dstr'"
+        # step 2: get <key> [<deli>] [<rest>]
+        ___regexp "$jelt" "$dstr" "Extra chars" "No key" dkey ddel dstr || return
+        if [ "$ddel" = ':' ] ; then
+            # step 3: get value (can be missing, quoted or a plain word)
+            ___regexp "$jval" "$dstr" "Extra chars" "Error" dall dquo dpln dstr || return
+            if [ "${dall:-,}" = ',' ] ; then dval='-'
+            elif [ -n "$dquo" ] ; then       dval="$dquo"
+            else                             dval="$dpln"
+            fi
+            trace -a -p -c 'json parser' "key %-15s  value %s" "'$dkey'" "'$dval'"
+            DAT_DICTDATA["$1/$dkey"]="$dval"
+        else
+            trace -a -c 'json parser' "expected colon:" "$dkey"
+        fi
+    done
+}
+
 # saving payload data to a file runs in a sub-shell (not calling quit)
 serializer() {
-    local mesg mtag last
+    local mesg mtag last cont=1
     while read mesg ; do
-        # trace -c 'serializer' -a -- "$mesg"
-        case "$mesg" in
-            */*{)   mtag="${mesg%% *}" ;;
-            *})     mtag= ;;
-            *)      [ -z "$mtag" ] && continue
-                    mesg="${mesg%\",}" ; mesg="${mesg/\": / }" ; mesg="${mesg//\"/}"
-                    DAT_DICTDATA["$mtag/${mesg%% *}"]="${mesg#* }"
-                    mesg="${DAT_DICTDATA[@]@A}" ; mesg="${mesg#* -A }"
-                    if [ "$last" = "$mesg" ] ; then
-                        trace -a -c 'serializer' "Data not changed"
-                    else
-                        last="$mesg"
-                        trace -a -c 'serializer' "${mesg#*=}"
-                        echo "$mesg" >"$DAT_MQTTDATA"
-                    fi
+        # get topic and a JSON document
+        #trace -a -c 'serializer read' -- "$mesg"
+        case "${mesg// /}" in
+            */*{*}) mtag="${mesg%% *}" ; json="${mesg#*\{}{" ;;
+            */*{*)  mtag="${mesg%% *}" ; json="${mesg#*\{}{" ; continue ;;
+            *})     json+=" $mesg" ;;
+            *)      [ -n "$mtag" ] && json+=" $mesg" ; continue ;;
         esac
+        [ -z "$mtag" -o -z "$json" ] && continue
+
+        # parse JSON into dictionary and serialize it to file
+        ___parser "$mtag" "$json"
+        mesg="${DAT_DICTDATA[@]@A}" ; mesg="${mesg#* -A }"
+        if [ "$last" = "$mesg" ] ; then
+            trace -a -c 'serializer info' "Data not changed"
+        else
+            last="$mesg"
+            trace -a -c 'serializer write' "${#DAT_DICTDATA[@]} items"
+            echo "$mesg" >"$DAT_MQTTDATA"
+        fi
+        mtag=                               # wait for next topic/doc
     done <"$DAT_MQTTPIPE"
     exit 1                                  # must not call quit
 }
+
+# this version has a cripled parser but may help understanding the logic
+#serializer() {
+#    local mesg mtag last
+#    while read mesg ; do
+#        trace -c 'serializer' -a -- "$mesg"
+#        case "$mesg" in
+#            */*{)   mtag="${mesg%% *}" ;;
+#            *})     mtag=
+#                    mesg="${DAT_DICTDATA[@]@A}" ; mesg="${mesg#* -A }"
+#                    if [ "$last" = "$mesg" ] ; then
+#                        trace -a -c 'serializer' "Data not changed"
+#                    else
+#                        last="$mesg"
+#                        trace -a -c 'serializer' "${mesg#*=}"
+#                        echo "$mesg" >"$DAT_MQTTDATA"
+#                    fi
+#                    ;;
+#            *)      [ -z "$mtag" ] && continue
+#                    mesg="${mesg%\",}" ; mesg="${mesg/\": / }" ; mesg="${mesg//\"/}"
+#                    DAT_DICTDATA["$mtag/${mesg%% *}"]="${mesg#* }"
+#        esac
+#    done <"$DAT_MQTTPIPE"
+#    exit 1                                  # must not call quit
+#}
 
 # ------------------------------------------------------------------------------
 # Display updates
