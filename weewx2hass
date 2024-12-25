@@ -2,6 +2,9 @@
 CEN_LEGAL="Copyright Dr. J. Pfennig (c) 2024; BSD License"
 CEN_TITLE="Tool to foreward data from WeeWX to Home Assistant viq MQtt"
 
+# NOTE this script contains annotations to make 'shellcheck' happy. To run
+# 'shellcheck' use: centauricreate --check <file>   # see centauri-bash-lib
+
 # declare global variables ...
 
 CEN_OPT_CONF=                       # see --config
@@ -41,7 +44,7 @@ makeConfig() {
         fi
         if [ -n "$_conf" ] ; then
             message "Loading configuration:" "$_conf"
-            # shellcheck disable=SC1090
+                                                            # shellcheck disable=SC1090
             source "$_conf" || quit -e
         fi
         [ -n "$CEN_OPT_HOST" ] && ITEMS+=("$@")
@@ -360,7 +363,7 @@ convMiKm() {
 lastRecord() {
     local ssql
     system -r -s ssql -e -- sqlite3 "$2" "SELECT $4 FROM $3 WHERE ROWID=(SELECT max(ROWID) FROM $3);"
-    # shellcheck disable=SC2181
+                                                        # shellcheck disable=SC2181
     [ $? = 0 ] || ssql=
     splitjoin -d '|' -s "$1" -- "$ssql"
     [ -n "$ssql" ]                                      # return status
@@ -380,7 +383,7 @@ sendMQTT() {
 
     message -a -p "mqtt %-20s update (%(%Y-%m-%d %H:%M)T)" "'$topi'" -1
     DAT_MQTTDICT["$topi"]="$payl"
-    # shellcheck disable=SC2145
+                                                        # shellcheck disable=SC2145
     dryrun "mosquitto_pub $@ -t $topi -m ${payl//[[:cntrl:]]/ }" ||
         system -e -- mosquitto_pub "$@" -t "$topi" -m "$payl"
 }
@@ -485,7 +488,7 @@ run() {
             [ -n "$CEN_OPT_LOGF" ] && DAT_LOGFILE="$CEN_OPT_LOGF"
             if [ -n "$DAT_LOGFILE" ] ; then
                 true >> "$DAT_LOGFILE" 2>/dev/null
-                # shellcheck disable=SC2181
+                                                        # shellcheck disable=SC2181
                 [ $? = 0 ] || quit -e "Cannot open logfile:" "$DAT_LOGFILE"
             else
                 DAT_LOGFILE='/dev/null'

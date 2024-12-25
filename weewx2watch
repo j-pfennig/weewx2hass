@@ -2,6 +2,9 @@
 CEN_LEGAL="Copyright Dr. J. Pfennig (c) 2024; BSD License"
 CEN_TITLE="Monitor for weewx2hass data, simple ASCII-art clock"
 
+# NOTE this script contains annotations to make 'shellcheck' happy. To run
+# 'shellcheck' use: centauricreate --check <file>   # see centauri-bash-lib
+
 # declare global variables ...
 
 CEN_OPT_ASCII=                  # see --ascii
@@ -84,10 +87,12 @@ ___parser() {
 
 # saving payload data to a file runs in a sub-shell (not calling quit)
 serializer() {
-    local mesg mtag last cont=1
+    local mesg mtag last
+    # shellcheck disable=SC2162     # escaping \ is intended
     while read mesg ; do
         # get topic and a JSON document
         #trace -a -c 'serializer read' -- "$mesg"
+        # shellcheck disable=SC1083
         case "${mesg// /}" in
             */*{*}) mtag="${mesg%% *}" ; json="${mesg#*\{}{" ;;
             */*{*)  mtag="${mesg%% *}" ; json="${mesg#*\{}{" ; continue ;;
@@ -98,6 +103,7 @@ serializer() {
 
         # parse JSON into dictionary and serialize it to file
         ___parser "$mtag" "$json"
+                                                            # shellcheck disable=SC2124
         mesg="${DAT_DICTDATA[@]@A}" ; mesg="${mesg#* -A }"
         if [ "$last" = "$mesg" ] ; then
             trace -a -c 'serializer info' "Data not changed"
@@ -106,9 +112,9 @@ serializer() {
             trace -a -c 'serializer write' "${#DAT_DICTDATA[@]} items"
             echo "$mesg" >"$DAT_MQTTDATA"
         fi
-        mtag=                               # wait for next topic/doc
+        mtag=                                               # wait for next topic/doc
     done <"$DAT_MQTTPIPE"
-    exit 1                                  # must not call quit
+    exit 1                                                  # must not call quit
 }
 
 # this version has a cripled parser but may help understanding the logic
@@ -142,12 +148,13 @@ serializer() {
 
 DAT_UPDATE_HHMM=            # time in HHMM format
 DAT_UPDATE_YYMD=            # ISO date and localized weekday
-DAT_OUTPUT_HHMM=
+DAT_OUTPUT_HHMM=            # toilet output (arrays) ...
 DAT_OUTPUT_YYMD=
 DAT_OUTPUT_TEMP=
-DAT_OUTPUT_CLEAR=
+DAT_OUTPUT_CLEAR=           # clear screen escape sequence
 
 # used by main bash instance to load data written by serializer()
+# shellcheck disable=SC2317
 update_data() {
     if ((DAT_COUNTER % DAT_POLLMOD)) ; then                 # run only every DAT_POLLMOD sec.
         # trace -a "Skip:" "No data check"
@@ -155,6 +162,7 @@ update_data() {
     elif ! [ "$DAT_MQTTDATA" -nt "$DAT_UPDATED" ] ; then    # run only on data update
         return 1
     fi
+                                                            # shellcheck disable=SC1090
     source "$DAT_MQTTDATA"
     [ "${#DAT_DICTDATA[@]}" = 0 ] && return 1
     trace -a -c 'update_data' "${#DAT_DICTDATA[@]} items"
@@ -163,8 +171,9 @@ update_data() {
 }
 
 # Clock mockup, run toilet after updates, dump to console
-update_clock() {
-    local tnow="$EPOCHSECONDS" hhmm scnd yymd fupd line
+                                                            # shellcheck disable=SC2317
+    update_clock() {
+    local tnow="$EPOCHSECONDS" hhmm yymd fupd line
     # printf -v scnd '%(%S)T' "$tnow"                       # unused in this demo
     printf -v hhmm '%(%H%M)T' "$tnow"
     printf -v yymd '%(%Y-%m-%d %A)T' "$tnow"
@@ -182,11 +191,10 @@ update_clock() {
                      "${DAT_UPDATE_YYMD#* } ${DAT_UPDATE_YYMD% *}"
     fi
     if update_data || [ -z "$DAT_OUTPUT_TEMP" ] ; then
-        fupt=1
         local tmp1="${DAT_DICTDATA["${DAT_MQTOPICS[1]}/temperature"]}"
         local tmp2="${DAT_DICTDATA["${DAT_MQTOPICS[3]}/temperature"]}"
         printf -v line '%5s°  %5s°' "${tmp1:---.-}" "${tmp2:---.-}"
-        system -f -a DAT_OUTPUT_TEMP -- toilet -f sm${DAT_FONT}12 -t -- "$line"
+        system -f -a DAT_OUTPUT_TEMP -- toilet -f "sm${DAT_FONT}12" -t -- "$line"
 
     fi
     [ -z "$fupd" ] && return
@@ -204,6 +212,7 @@ update_clock() {
 }
 
 # Montor mode, simple text messages
+                                                            # shellcheck disable=SC2317
 update_text() {
     local tnow="$EPOCHSECONDS" hhmm
     printf -v hhmm '%(%H%M)T' "$tnow"
@@ -277,6 +286,7 @@ run() {
 # ------------------------------------------------------------------------------
 # Custom options
 # ------------------------------------------------------------------------------
+                                                    # shellcheck disable=SC2317
 options() {
     case "$1" in
     -A|--asc*)      optarg 'ascii'  -   -f ;;       # flag
@@ -286,7 +296,9 @@ options() {
     esac
 }
 
-
+# ------------------------------------------------------------------------------
+# Help implementation
+# ------------------------------------------------------------------------------
 usage() {
     create -c <<!EOF
 Usage:     $CEN_NAME [-d|-h] [-v|-q]
@@ -309,7 +321,7 @@ Options:   -d --dryrun          show what would be done, make no changes
 Arguments: <host>               mosquitto_sub arguments, see example
            <idnx>               <cols>.<rows>, see example
            <topic>              topics to subscribe to. Should contain a
-                                'temporature' field in payload. All other
+                                'temperature' field in payload. All other
                                 fields ignored. Must be in JSON format.
 
 Examples:   # use -H to pass <host> and options to mosquitto_sub
