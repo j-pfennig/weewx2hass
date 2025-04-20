@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-CEN_LEGAL="Copyright Dr. J. Pfennig (c) 2024; BSD License"
+CEN_LEGAL="Copyright Dr. J. Pfennig (c) 2024-2025; BSD License"
 CEN_TITLE="Monitor for weewx2hass data, simple ASCII-art clock"
 
 # NOTE this script contains annotations to make 'shellcheck' happy. To run
@@ -9,6 +9,7 @@ CEN_TITLE="Monitor for weewx2hass data, simple ASCII-art clock"
 
 CEN_OPT_ASCII=                  # see --ascii
 CEN_OPT_CLOCK=                  # see --extra
+CEN_OPT_FILE=                   # see --file
 CEN_OPT_HOST='localhost'        # see --host
 CEN_OPT_INDENT='2,0'            # see --indent
 
@@ -172,7 +173,7 @@ update_data() {
 
 # Clock mockup, run toilet after updates, dump to console
                                                             # shellcheck disable=SC2317
-    update_clock() {
+update_clock() {
     local tnow="$EPOCHSECONDS" hhmm yymd fupd line
     # printf -v scnd '%(%S)T' "$tnow"                       # unused in this demo
     printf -v hhmm '%(%H%M)T' "$tnow"
@@ -211,23 +212,37 @@ update_data() {
                                                echo -n "$icol   ${DAT_OUTPUT_TEMP[7]}  "
 }
 
-# Montor mode, simple text messages
+# Monitor mode, simple text messages
                                                             # shellcheck disable=SC2317
 update_text() {
     local tnow="$EPOCHSECONDS" hhmm
     printf -v hhmm '%(%H%M)T' "$tnow"
     if [ "$hhmm" != "$DAT_UPDATE_HHMM" ] ; then
         DAT_UPDATE_HHMM="$hhmm"
-        message "Time:" "${hhmm::2}:${hhmm:2}"
+        message $"Time:" "${hhmm::2}:${hhmm:2}"
     fi
     update_data || return
     local dat1="${DAT_DICTDATA["${DAT_MQTOPICS[1]}/temperature"]}"
     local dat2="${DAT_DICTDATA["${DAT_MQTOPICS[3]}/temperature"]}"
-    message -p "MQtt: Temperatures   %6s°  %6s°" "${dat1:---.-}" "${dat2:---.-}"
+    message -p $"MQtt: Temperatures   %6s°  %6s°" "${dat1:---.-}" "${dat2:---.-}"
     dat1="${DAT_DICTDATA["${DAT_MQTOPICS[1]}/humidity"]}"
     dat2="${DAT_DICTDATA["${DAT_MQTOPICS[3]}/humidity"]}"
     [ -n "$dat1$dat2" ] &&
-        message -a -p "      Humidity %12s%%  %6s%%" "${dat1:---.-}" "${dat2:---.-}"
+        message -a -p $"      Humidity %12s%%  %6s%%" "${dat1:---.-}" "${dat2:---.-}"
+}
+
+# File output mode
+
+update_file() {
+    update_data || return
+    {   local dat1="${DAT_DICTDATA["${DAT_MQTOPICS[1]}/temperature"]}"
+        local dat2="${DAT_DICTDATA["${DAT_MQTOPICS[3]}/temperature"]}"
+        printf 'temperature_inside="%s"; temperature_outside="%s";\n' "$dat1" "$dat2"
+        dat1="${DAT_DICTDATA["${DAT_MQTOPICS[1]}/humidity"]}"
+        dat2="${DAT_DICTDATA["${DAT_MQTOPICS[3]}/humidity"]}"
+        [ -n "$dat1$dat2" ] &&
+            printf 'humidity_inside="%s"; humidity_outside="%s;"\n' "$dat1" "$dat2"
+    } >"$CEN_OPT_FILE"
 }
 
 # ------------------------------------------------------------------------------
@@ -239,7 +254,11 @@ run() {
 
     # check pre requisites
     system -c -f mosquitto_sub
-    if [ -n "$CEN_OPT_CLOCK" ] ; then
+    if [ -n "$CEN_OPT_FILE" ] ; then
+        [ "$CEN_OPT_FILE" = '-' ] && CEN_OPT_FILE='/dev/stdout'
+        [ -w "$CEN_OPT_FILE" ] || quit "Cannot write to file:" "$CEN_OPT_FILE"
+        updt='update_file'
+    elif [ -n "$CEN_OPT_CLOCK" ] ; then
         system -c -f toilet clear
         system -f -s DAT_OUTPUT_CLEAR -- clear
         updt='update_clock'
@@ -291,8 +310,9 @@ options() {
     case "$1" in
     -A|--asc*)      optarg 'ascii'  -   -f ;;       # flag
     -C|--clo*)      optarg 'clock'  -   -f ;;       # flag
-    -H|--hos*)      optarg 'host'   -   -t ;;       # text option
-    -I|--ind*)      optarg 'indent' -   -t ;;       # text option
+    -F|--fil*)      optarg 'file'   -   -t ;;       # text
+    -H|--hos*)      optarg 'host'   -   -t ;;       # text
+    -I|--ind*)      optarg 'indent' -   -t ;;       # text
     esac
 }
 
@@ -302,7 +322,7 @@ options() {
 usage() {
     create -c <<!EOF
 Usage:     $CEN_NAME [-d|-h] [-v|-q]
-                     [-A] [-C] [-H <host>] [-I <idnt> [---] <topic>...
+           ${CEN_NAME//?/ } [-A] [-C] [-F <file>] [-H <host>] [-I <idnt> [---] <topic>...
 
            $CEN_TITLE.  With
            option '--clock' it displays time, date and two temperatures
@@ -315,6 +335,7 @@ Options:   -d --dryrun          show what would be done, make no changes
 
            -A --ascii           use pure ASCII (for console screen font)
            -C --clock           clock mockup, inside/outside temperature
+           -F --file    <path>  dump data to file
            -H --host    <host>  MQtt host name (+ options if needed)
            -I --indent  <idnt>  indent clock by columns/rows
 
