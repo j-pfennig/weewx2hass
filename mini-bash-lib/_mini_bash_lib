@@ -1,0 +1,89 @@
+#!/usr/bin/bash
+# ------------------------------------------------------------------------------
+# This is a proxy for mini-bash-lib. The proxy must not be copied and must be
+# located in the mini-bash-lib source folder. It should be sym-linked to every
+# folder containing a script that wants to use the shared mini-bash-lib. The
+# scripts then load the proxy using a statement like:
+#
+#   PATH+=":${0%/*}" . _mini_bash_lib <option>... - <version> || exit 2
+#
+# If centauri-bash-lib is installed it gets loaded centauri-bash-lib instead
+# of mini-bash-lib. There are three ways to disable this:
+#
+#   1)  CEN_FEATURE_N=1                 # before calling the proxy  -or-
+#   2)  _mini_bash_lib  ... -n ...      # disable centauri-bash-lib
+#   3)  --mini=1                        # command line option
+#
+# The proxy passes all arguments to centauri-bash-lib but always sets options
+# -a -d -f .r (autoload dryrun force run). It also sets the TEXTDOMAIN for i10n.
+# ------------------------------------------------------------------------------
+
+CEN_CMDBASE=                            # path of mini-bash-lib source
+CEN_CMDDATA=                            # scratch, proxy file path
+CEN_CMDCURR=1
+CEN_NAME="${BASH_ARGV0##*/}"
+while [ $# -ge "$CEN_CMDCURR" ] ; do    # parse arguments ...
+    CEN_CMDDATA="${!CEN_CMDCURR}" ; ((CEN_CMDCURR += 1))
+    case "$CEN_CMDDATA" in
+    -m) ((CEN_CMDCURR += 1)) ;;         # skip value (module name)
+    -f) CEN_FEATURE_F=1 ;;              # option --force
+    -n) CEN_FEATURE_N=1 ;;              # disable centauri-bash-lib
+    -t) CEN_FEATURE_T=1 ;;              # allow i10n
+    -y) CEN_FEATURE_Y=1 ;;              # options --no and --yes
+    -?) ;;                              # ignore
+    -)  break ;;                        # end of options, no name
+    *)  CEN_NAME="$CEN_CMDDATA" ; break # end of options
+    esac
+done
+CEN_VERSION="${!CEN_CMDCURR}"
+CEN_RUN_MIN_ARGS='-'                    # no arg count check
+
+if [ -z "$CEN_FEATURE_N" ] ; then       # search for --mini option
+    readarray -d '' -t CEN_CMDCURR <'/proc/self/cmdline'
+    for CEN_CMDDATA in "${CEN_CMDCURR[@]}" ; do
+       case "$CEN_CMDDATA" in
+       ---) break ;;
+       --mini*=0) CEN_FEATURE_N=0 ; break ;;
+       --mini*=1) CEN_FEATURE_N=1 ; break
+       esac
+    done
+fi
+unset CEN_CMDCURR
+
+# we really need a physical path, try via builtin to avaoid a sub-shell
+if enable realpath && realpath -a CEN_CMDBASE "$BASH_SOURCE" ; then
+    enable -n realpath
+else
+    CEN_CMDBASE=$(realpath "$BASH_SOURCE") || CEN_CMDBASE="$BASH_SOURCE"
+fi &>/dev/null
+CEN_CMDBASE="${CEN_CMDBASE%/*}"
+
+# try centauri-bash-lib
+if [ "$CEN_FEATURE_N" != 1 ] ; then
+    CEN_CMDDATA=$(type -p '_centauri_bash_lib')
+    CEN_CMDDATA="${CEN_CMDDATA%/*}/_centauri_bash_lib"
+fi
+
+# try mini-bash-lib
+if [ "$CEN_FEATURE_N" = 1 ] || [ ! -f "$CEN_CMDDATA" ] ; then
+    CEN_CMDDATA="$CEN_CMDBASE/mini-bash-lib"
+    # set TEXTDOMAIN to mini library
+    if [ -n "$CEN_FEATURE_T" ] ; then
+        TEXTDOMAIN='mini-bash-lib' ; TEXTDOMAINDIR="${CEN_CMDBASE%/*/*}/share/locale"
+    fi
+fi
+
+# load library, have packed version?
+[ "${CEN_CMDDATA}.p" -nt "$CEN_CMDDATA" ] && CEN_CMDDATA+='.p'
+[ -f "$CEN_CMDDATA" ] || return 127
+source "$CEN_CMDDATA" -a -d -f -r "$@"
+# no implicit usage() call
+CEN_RUN_MIN_ARGS=0
+
+# set TEXTDOMAIN back to source
+if [ -n "$CEN_FEATURE_T" ] ; then
+    TEXTDOMAIN="$CEN_NAME" ; TEXTDOMAINDIR="${CEN_CMDBASE%/*/*}/share/locale"
+fi
+:
+
+# end

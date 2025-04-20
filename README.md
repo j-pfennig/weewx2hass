@@ -1,3 +1,17 @@
+**Overview**
+
+Here we habe two tools, weewx2hass and weewx2watch, which are self-confained
+scripts. Each can be used indendently but they fit into a larger context:
+
+        1. A HTML based day-time-clock with temperatures display
+        2. Importing weather data from a MQtt broker
+        3. Publishing data from HomeAssistant via MQtt (optional)
+        4. Importing data from a WeeWx weather stattion into HomeAssistant
+        5. Building an appliance using centaurisoho
+
+
+**weewx2hass to publish WeeWx data via MQtt**
+
 'weewx2hass' is an all-in-one tool that uses 'sqlite3' and 'mosquitto_pub' to
 poll the SQLite data-base of weewx and to send extracted data to a MQtt broker.
 The MQtt uses JSON data as its payload so that it can be interpreted easily by
@@ -13,8 +27,8 @@ to understand how it works:
 
         wget raw.githubusercontent.com/j-pfennig/weewx2hass/refs/heads/main/weewx2hass-temp-only
 
-This script uses an embedded version of 'mini-bash-lib'. This is not relevant
-for using it, but for the curious:
+This script uses an embedded version of 'mini-bash-lib'. It is not relevant to
+know about details for using it, but for the curious:
 
         https://github.com/j-pfennig/mini-bash-lib
 
@@ -32,5 +46,58 @@ Try these commands to make it work:
 
         apt install sqlite3 mosquitto mosquitto-clients     # install dependencies
 
-'weewx2watch' is a monitor tool and a simple ASCII-art digital clock that can
-show inside/outside temperatures. See 'weewx2watch --help' for details.
+**weewx2watch monitor and weather-station day-time-clock**
+
+'weewx2watch' is a monitor tool and a simple ASCII-art or HTML digital clock
+that can show inside/outside temperatures. See 'weewx2watch --help' for details.
+The following scenarios will briefly described below:
+
+1. Monitor MQtt data
+2. Write MQtt data to a File (web server)
+3. Mock-up weather-station day-time-clock
+4. Stand alone usage as weather-station day-time-clock
+5. Integration with centauriclock (centauri-tools only)
+
+*weewx2watch stand alone usage as weather-station day-time-clock*
+
+Run as user 'weewx', create a configuration folder:
+
+        sudo -i -u weewx
+        ln -s <source-folder>/weewx2show .
+        ./weewx2show --base=- --host=<mqtt-host>
+
+To use a web server to provide data use --url instead of host:
+
+        ./weewx2show --base=- --url=<http-url>
+
+Folder '.local/weewx2show' should now contain this data:
+
+        weewx2show.bash             # script to launch a browser
+        weewx2show.html             # html code
+        weewx2show.js               # weather data or web url
+
+*Integration with centauriclock (centauri-tools only)*
+
+Run as user 'clock', create a configuration folder:
+
+        sudo -i -u clock
+        centauriclock --base=-
+        ln -s <source-folder>/weewx2show .
+        ./weewx2show --base=- --host=<mqtt-host>
+
+Folder '.local/centauriclock' should now contain this data:
+
+        centauriclock.bash          # script to launch weewx2show
+        centauriclock.html          # html code
+        centauriclock.js            # weather data
+
+To use a web server to provide data use --url instead of host:
+
+        ./weewx2show --base=- --url=<http-url>
+
+Folder '.local/centauriclock' should now contain this data:
+
+        centauriclock.html          # html code
+        centauriclock.js            # web url
+
+**end**

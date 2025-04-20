@@ -1,0 +1,4 @@
+This is a minimal installation of mini-bash-lib. See github for details:
+
+_mini_bash_lib      Proxy to load mini-bash-lib or centauri-bash-lib
+mini-bash-lib.p     uglified mini-bash-lib loaded by proxy
