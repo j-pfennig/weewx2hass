@@ -1,0 +1,54 @@
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8\n"
+
+#: weewx2hass:43
+msgid "Not readable file:"
+msgstr "Keine lesbare Datei:"
+
+#: weewx2hass:46
+msgid "Loading configuration:"
+msgstr "Lade Konfiguration:"
+
+#: weewx2hass:51
+msgid "Got no configuration data"
+msgstr "Habe keine Konfigurationsdaten"
+
+#: weewx2hass:60
+msgid "Expected a <tag>:"
+msgstr "Habe ein <tag> erwartet:"
+
+#: weewx2hass:78
+msgid "Required syntax is '<column>;<name>[;C|F|%]':"
+msgstr "Erwartete Syntax ist '<column>;<name>[;C|F|%]':"
+
+#: weewx2hass:380
+msgid "mqtt '%s' repeated, do not publish"
+msgstr "mqtt '%s' wiederholt, nicht veröffentlicht"
+
+#: weewx2hass:384
+msgid "mqtt %-20s update (%(%Y-%m-%d %H:%M)T)"
+msgstr "mqtt %-20s aktualisiert (%(%Y-%m-%d %H:%M)T)"
+
+#: weewx2hass:454
+msgid "Sleeping %s [s]"
+msgstr "Schlafe %s [s]"
+
+#: weewx2hass:462
+msgid "Replace existing output file"
+msgstr "Vorhandene Ausgabedatei ersetzen"
+
+#: weewx2hass:478
+msgid "Don't know what to do, try '$CEN_NAME --help'"
+msgstr "Weiss nicht was zu tun ist, versuche '$CEN_NAME --help'"
+
+#: weewx2hass:483
+msgid "Not a readable file:"
+msgstr "Keine lesbare Datei:"
+
+#: weewx2hass:492
+msgid "Cannot open logfile:"
+msgstr "Kann Logdatei nicht öffnen:"
+
+#: weewx2hass:505
+msgid "Running in background"
+msgstr "Läuft im Hintergrund"

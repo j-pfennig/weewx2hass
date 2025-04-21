@@ -15,7 +15,7 @@
 #   3)  --mini=1                        # command line option
 #
 # The proxy passes all arguments to centauri-bash-lib but always sets options
-# -a -d -f .r (autoload dryrun force run). It also sets the TEXTDOMAIN for i10n.
+# -a -d -f -r (autoload dryrun force run). It also sets the TEXTDOMAIN for i10n.
 # ------------------------------------------------------------------------------
 
 CEN_CMDBASE=                            # path of mini-bash-lib source

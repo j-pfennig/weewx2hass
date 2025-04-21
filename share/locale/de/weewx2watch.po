@@ -1,0 +1,42 @@
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8\n"
+
+#: ../../src/centauri-weewx/shared/weewx2watch:497
+msgid "Waiting for mqtt connection:"
+msgstr ""
+
+#: ../../src/centauri-weewx/shared/weewx2watch:500
+msgid "Connection to mqtt is ready"
+msgstr ""
+
+#: ../../src/centauri-weewx/shared/weewx2watch:689
+msgid "Time:"
+msgstr "Zeit:"
+
+#: ../../src/centauri-weewx/shared/weewx2watch:694
+msgid "MQtt: Temperatures   %6s°  %6s°"
+msgstr "MQtt: Temperaturen   %6s°  %6s°"
+
+#: ../../src/centauri-weewx/shared/weewx2watch:698
+msgid "      Humidity %12s%%  %6s%%"
+msgstr "      Feuchtigkeit %7s%%  %6s%%"
+
+#: ../../src/centauri-weewx/shared/weewx2watch:756
+msgid "Cannot write to file:"
+msgstr ""
+
+#: ../../src/centauri-weewx/shared/weewx2watch:775
+msgid "No 'sleep' loadable, using external tool"
+msgstr ""
+
+#: ../../src/centauri-weewx/shared/weewx2watch:791
+msgid "Subscriber process died"
+msgstr ""
+
+#: ../../src/centauri-weewx/shared/weewx2watch:792
+msgid "Serializer process died"
+msgstr ""
+
+#: ../../src/centauri-weewx/shared/weewx2watch:794
+msgid "QML display process died"
+msgstr ""

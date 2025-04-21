@@ -1,0 +1,9 @@
+The centauri weewx tools use the centauri-bash-lib or mini-bash-lib
+application framework.  This is a minimal installation of mini-bash-lib. 
+See github for more details:
+
+    https://github.com/j-pfennig/mini-bash-lib
+
+_mini_bash_lib      Proxy to load mini-bash-lib or centauri-bash-lib
+mini-bash-lib.p     uglified mini-bash-lib loaded by the proxy
+

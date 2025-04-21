@@ -1,4 +1,3 @@
-#!/usr/bin/bash
 if [ -z "$CEN_HOOK_MESSAGE" ];then
 {
 {
@@ -228,6 +227,7 @@ case "$1${_args::1}" in
 -nl)_args+=('-f');;
 -rl)_args+=('-r');;
 -Sl)_args+=('-s');;
+-om)_args+=('-f');;
 -f?)_oerr='-f -p';;
 -q?)_oerr='-q';;
 -r?)_orun=1;;
