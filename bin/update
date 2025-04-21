@@ -1,0 +1,37 @@
+#!/usr/bin/bash
+CEN_LEGAL="Copyright <anonymous> (c) 2025; <unknown> License"
+CEN_TITLE="Update mini-bash-lib, refresh shared"
+
+# use proxy to load mini-bash-lib or centauri-bash-lib (if installed)
+PATH+=":${0%/*}" . _mini_bash_lib - "0.00" || exit 2
+
+# declare global variables ...
+
+DAT_ORIG=
+DAT_DEST=
+
+# ------------------------------------------------------------------------------
+# Payload
+# ------------------------------------------------------------------------------
+run() {
+    system -r -s DAT_DEST -- realpath -- "$BASH_SOURCE"
+    DAT_DEST="${DAT_DEST%/*/*}"
+    folder -f -- "$DAT_DEST"
+    DAT_ORIG="${DAT_DEST%/*}/mini-bash-lib"
+    folder -f -- "$DAT_ORIG"
+
+    copy -a -u "$DAT_ORIG/src/mini-bash-lib/_mini_bash_lib" "$DAT_DEST/bin"
+    copy -a -u "$DAT_ORIG/src/mini-bash-lib/mini-bash-lib.p" "$DAT_DEST/bin"
+
+    error -q
+
+    embed "$DAT_ORIG/bin/minify" -y -R "$DAT_DEST/src/centauri-weewx/standalone/weewx2hass"
+    embed "$DAT_ORIG/bin/minify" -y -R "$DAT_DEST/src/centauri-weewx/standalone/weewx2watch"
+}
+
+# ------------------------------------------------------------------------------
+# Pass control to app framework
+# ------------------------------------------------------------------------------
+main "$@" ; quit
+
+# End

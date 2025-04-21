@@ -1,6 +1,6 @@
 **Overview**
 
-Here we habe two tools, 'weewx2hass' and 'weewx2watch', implemented as bash
+Here we have two tools, 'weewx2hass' and 'weewx2watch', implemented as bash
 scripts. Each can be used indendently but they fit into a larger context:
 
 1. A HTML based day-time-clock with temperatures display
@@ -14,19 +14,40 @@ scripts sharing it, or it can be embedded to make scripts stand-alone. The
 release sources contain both versions, in a production environment only a
 sub-set is needed. For the shared version these files are needed:
 
-        ├── mini-bash-lib
-        │   ├── _mini_bash_lib          # proxy to load mini-bash-lib
-        │   └── mini-bash-lib.p         # packed library source
-        ├── shared
-        │   ├── _mini_bash_lib -> ../mini-bash-lib/_mini_bash_lib
-        │   ├── weewx2hass
-        │   └── weewx2watch
+        ├── bin
+        │   ├── _mini_bash_lib -> ../src/centauri-weewx/mini-bash-lib/_mini_bash_lib
+        │   ├── mini-bash-lib.p
+        │   ├── weewx2hass -> ../src/centauri-weewx/shared/weewx2hass
+        │   └── weewx2watch -> ../src/centauri-weewx/shared/weewx2watch
+        ├── share
+        │   └── locale                      # i10n is optional ...
+        │       └── de
+        │           └── LC_MESSAGES
+        │               ├── weewx2hass.mo
+        │               └── weewx2watch.mo
+        └── src
+            └── centauri-weewx
+                ├── mini-bash-lib
+                │   ├── _mini_bash_lib      # proxy to load mini-bash-lib
+                │   ├── mini-bash-lib.p     # packed library source
+                │   └── README
+                ├── shared
+                │   ├── weewx2hass
+                │   └── weewx2watch
+                └── standalone
+                    ├── weewx2hass
+                    └── weewx2watch
 
 And for the stand-alone version only two files are used:
 
-        └── standalone
-            ├── weewx2hass
-            └── weewx2watch
+    ├── bin
+    │   ├── weewx2hass -> ../src/centauri-weewx/standalone/weewx2hass
+    │   └── weewx2watch -> ../src/centauri-weewx/standalone/weewx2watch
+    └── src
+        └── centauri-weewx
+            └── standalone
+                ├── weewx2hass
+                └── weewx2watch
 
 For more details see:
 

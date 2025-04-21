@@ -322,7 +322,7 @@ makeJSON() {
     local _vnam="$1" _jitm _jsep _jdat _jval ; shift
     trace -a -c 'makeJSON' "$@"
     while [ "$#" -gt 0 ] ; do
-        _jval="${2%[[::space::]]*}"             # remove trailing whitespace
+        _jval="${2%"${2##*[![:space:]]}"}"      # remove trailing whitespace
         [ "$#" -gt 2 ] && _jsep=',' || _jsep=
         printf -v _jitm '"%s": "%s"%s\n' "$1" "$_jval" "$_jsep"
         _jdat+="$_jitm" ; shift ; shift
