@@ -21,7 +21,6 @@ run() {
     folder -f -- "$DAT_ORIG"
 
     copy -a -u "$DAT_ORIG/src/mini-bash-lib/_mini_bash_lib" "$DAT_DEST/bin"
-    copy -a -u "$DAT_ORIG/src/mini-bash-lib/mini-bash-lib.p" "$DAT_DEST/bin"
 
     error -q
 
