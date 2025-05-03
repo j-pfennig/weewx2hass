@@ -1,9 +1,9 @@
 #!/usr/bin/bash
 CEN_LEGAL="Copyright Dr. J. Pfennig (c) 2024-2025; BSD License"
-CEN_TITLE="Tool to foreward data from WeeWX to Home Assistant via MQtt"
+CEN_TITLE="Tool to forward data from WeeWX to Home Assistant via MQtt"
 
 # use proxy to load mini-bash-lib or centauri-bash-lib (if installed)
-PATH+=":${0%/*}" . _mini_bash_lib -t - '0.11' || exit 2
+PATH+=":${0%/*}" . _mini_bash_lib -t - '0.12' || exit 2
 
 # declare global variables ...
 
@@ -109,7 +109,7 @@ showConf() {
 
 ### weewx database path (must be SQLite) ###
 
-#   SQLITE='/var/lib/weewx/weewx.sdb'
+#   SQLITE='$DAT_SQLITE'
 
 ### mosquitto_pub arguments (-t and -m are added automatically) ###
 
@@ -117,12 +117,15 @@ showConf() {
 #   which will be added literally to the argument list:
 
 #   BROKER='raspi1.some.home'
-#   BROKER='-h raspi1 -p 1883 -u whoever'
+#   BROKER=(-h raspi1 -p 1883 -u whoever)'
 
 ### override poll time and keep alive frequency
 
-#   SLEEP=120
-#   ALIVE=5
+#   sleep time between data-base polls in <s>
+#   SLEEP=$DAT_SLEEP
+
+#   update MQtt at least every <n> data-base polls
+#   ALIVE=$DAT_ALIVE
 
 ### list of data items ###
 
@@ -547,7 +550,7 @@ Options:   -d --dryrun          show what would be done, make no changes
            -v --verbose         be verbose (use twice for debug)
 
            -C --config  <conf>  Specify configuration file (the default is to
-                                try loading '/etc/default/$CEN_NAME')
+           °                    try loading '/etc/default/$CEN_NAME')
            -D --data    <fsql>  Path of a weewx SQLite data base file
            -L --logfile <file>  Logfile for --run (default is not output)
            -H --host    <name>  Enter foreground run loop using command line args

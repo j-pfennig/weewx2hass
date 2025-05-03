@@ -3,7 +3,7 @@ CEN_LEGAL="Copyright Dr. J. Pfennig (c) 2024-2025; BSD License"
 CEN_TITLE="Monitor for weewx2hass data, simple ASCII-art/HTML clock"
 
 # use proxy to load mini-bash-lib or centauri-bash-lib (if installed)
-PATH+=":${0%/*}" . _mini_bash_lib - '0.10' || exit 2
+PATH+=":${0%/*}" . _mini_bash_lib -t - '0.10' || exit 2
 
 # declare global variables ...
 
@@ -11,17 +11,15 @@ CEN_OPT_ASCII=                  # see --ascii
 CEN_OPT_BASE=                   # see --base
 CEN_OPT_CLOCK=                  # see --clock
 CEN_OPT_FILE=                   # see --file
-CEN_OPT_HOST='localhost'        # see --host
+CEN_OPT_HOST=                   # see --host
 CEN_OPT_INDENT=                 # see --indent
 CEN_OPT_TERM=                   # see --terminal
 CEN_OPT_URL=                    # see --url
 CEN_OPT_VIEWER=                 # see --viewer
 CEN_OPT_WAIT=                   # see --wait
 
-### TODO implement  --base --terminal --url --viewer
-
 DAT_MYSELF=                     # own path
-DAT_BASEDIR="~/.local/centauriclock"
+DAT_BASEDIR='~/.local/centauriclock'
 DAT_BASENAME=                   # set in config_fldr()
 
                                 # List of tag options for subscribe
@@ -62,7 +60,7 @@ config_fldr() {
         create_html "$DAT_BASENAME.html"
         create_bash "$DAT_BASENAME.bash"
     else
-        fatal "Missing configuration:" "$CEN_OPT_BASE"
+        fatal $"Missing configuration:" "$CEN_OPT_BASE"
     fi
 }
 
@@ -71,29 +69,58 @@ config_fldr() {
 # ------------------------------------------------------------------------------
 create_bash() {
     if [ -e "$1" ] ; then
-        [ -z "$CEN_OPT_FORCE" ] && return
+        [ -z "$CEN_OPT_FORCE" ] && [ -z "$CEN_OPT_URL$CEN_OPT_HOST" ] && return
         [ -w "$1" ] || return
     fi
-    create -t -c -- "$1" <<!EOF
-#!/usr/bin/bash
 
-# The datafile and the HTML file must be in the same folder and must not be
-# symlinks. Otherwise the browser will not load the datafile ...
-datafile='${1%.*}.js'
+    # create empty datafile, would disable temperature display
+    create -t "${1%.*}.js"  || return
 
-# The --wait option is required for appliances to wait for the network to
-# become ready ...
-dataopts="--file \$datafile --quiet --host=raspi1 --wait=-"
-datatool='${DAT_MYSELF:-$CEN_NAME}'
+    local temp
+    [ -n "$CEN_OPT_HOST" ] && temp='temperature_outside=""; temperature_inside=""'
+    local text=(
+        '#!/usr/bin/bash'
+        ''
+        '# The datafile and the HTML file must be in the same folder and must not be'
+        '# symlinks. Otherwise the browser will not load the datafile ...'
+        "datafile='${1%.*}.js'"
+        ''
+    )
 
-# Run weewx data import
-if [ -w "\$datafile" -a -x "\$datatool" ] ; then
-    echo "temperature_outside=''; temperature_inside=''" >"\$datafile"
-    exec "\$datatool" \$dataopts &
-fi
-
-# end
-!EOF
+    if [ -n "$CEN_OPT_URL" ] ; then
+        text+=(
+        'if [ -w "$datafile" ] ; then'
+        "   echo 'centauriclock_data=\"$CEN_OPT_URL\"' >\"\$datafile\""
+        'fi'
+        ''
+        '# end'
+        )
+    elif [ "${CEN_OPT_HOST:--}" != '-' ] ; then
+        text+=(
+        '# The --wait option is required for appliances to wait for the network to'
+        '# become ready ...'
+        "dataopts=(--file \"\$datafile\" --quiet --host '$CEN_OPT_HOST' --wait -)"
+        "datatool='${DAT_MYSELF:-$CEN_NAME}'"
+        ''
+        '# Run weewx data import'
+        ''
+        'if [ -w "$datafile" -a -x "$datatool" ] ; then'
+        "    echo '$temp' >\"\$datafile\""
+        '    exec "$datatool" "${dataopts[@]}" &'
+        'fi'
+        ''
+        '# end'
+        )
+    else
+        text+=(
+        'if [ -w "$datafile" ] ; then'
+        "   echo '// simple clock, no temperature display' >\"\$datafile\""
+        'fi'
+        ''
+        '# end'
+        )
+    fi
+    create -t -c -v text -- "$1"
     system -e -- chmod 775 "$1"
 }
 
@@ -479,7 +506,7 @@ display() {
     # create $CEN_TEMPFILE.qml
     # copy clock.html $CEN_TEMPFILE.html
     system -e /admin/Display/clock/clock-launcher.qml
-    message "QML display closed, terminating workers"
+    message $"QML display closed, terminating workers"
     {   kill -n 1 "$DAT_SUBSCRIBER"
         kill -n 1 "$DAT_SERIALIZER"
         kill -n 1 "$$"
@@ -494,10 +521,10 @@ subscriber() {
     local addr="$1:$CEN_OPT_WAIT" wcnt=0
     while [ -n "$CEN_OPT_WAIT" ] ; do
         echo 2>/dev/null >"/dev/tcp/${addr/:/\/}" && break
-        [ "$wcnt" = 0 ] && message -a $"Waiting for mqtt connection:" "$addr"
+        [ "$wcnt" = 0 ] && message -a $"Waiting for MQtt connection:" "$addr"
         sleep 3 ; ((wcnt += 1))
     done
-    [ "$wcnt" = 0 ] || message -a $"Connection to mqtt is ready"
+    [ "$wcnt" = 0 ] || message -a $"Connection to MQtt is ready"
 
     # CEN_OPT_HOST is not quoted to allow extra parameters ...
     exec mosquitto_sub -h $CEN_OPT_HOST -F "%t %p" "${DAT_MQTOPICS[@]}"
@@ -574,7 +601,7 @@ serializer() {
                                                             # shellcheck disable=SC2124
         mesg="${DAT_DICTDATA[@]@A}" ; mesg="${mesg#* -A }"
         if [ "$last" = "$mesg" ] ; then
-            trace -a -c 'serializer info' "Data not changed"
+            trace -a -c 'serializer info' $"Data not changed"
         else
             last="$mesg"
             trace -a -c 'serializer write' "${#DAT_DICTDATA[@]} items"
@@ -661,7 +688,7 @@ update_clock() {
     if update_data || [ -z "$DAT_OUTPUT_TEMP" ] ; then
         local tmp1="${DAT_DICTDATA["${DAT_MQTOPICS[1]}/temperature"]}"
         local tmp2="${DAT_DICTDATA["${DAT_MQTOPICS[3]}/temperature"]}"
-        printf -v line '%5s°  %5s°' "${tmp1:---.-}" "${tmp2:---.-}"
+        printf -v line '%5s°  %5s°' "${tmp2:---.-}" "${tmp1:---.-}"
         system -f -a DAT_OUTPUT_TEMP -- toilet -f "sm${DAT_FONT}12" -t -- "$line"
 
     fi
@@ -712,40 +739,45 @@ update_file() {
     } >"$CEN_OPT_FILE"
 }
 
+# The html clock
+
 run_clock() {
     local temp
     if [ -z "$CEN_OPT_FORCE" ] && [ -z "$DISPLAY" -o "${XDG_SESSION_TYPE:-tty}" = 'tty' ] ; then
-        quit "No GUI session detected, try option '--force' to override"
+        quit $"No GUI session detected, try option '--force' to override"
     elif system -c -- /usr/bin/qml-qt6 ; then
-        DAT_QMLVERSION="/usr/bin/qml-qt6"
+        DAT_QMLVERSION='/usr/bin/qml-qt6'
     elif system -c -- /usr/bin/qml ; then
-        DAT_QMLVERSION="/usr/bin/qml"
+        DAT_QMLVERSION='/usr/bin/qml'
     elif ! system -c -- x-www-browser ; then
-         quit "Neither qml, qml-qt6 or x-www-browser found, cannot run in GUI mode"
-    fi
-### TODO html file query
-    [ -z "$CEN_OPT_BASE" ] && config_fldr
-    if [ -n "$CEN_OPT_FILE" ] ; then
-        quit "Not implemented: --file"
-    fi
-    CEN_OPT_FILE="$DAT_BASENAME.js"     # always update_file ...
-    temp='temperature_inside="-"; temperature_outside="-";'
-    create -t -v temp -- "$CEN_OPT_FILE"
-    # no '-p': centauri-bash-lib would run a subshell causing a hang
-    system -e -- "$DAT_BASENAME.bash"
-    if [ -n "$DAT_QMLVERSION" ] ; then
-        system "$DAT_BASENAME.qml"
-    else
-        system x-www-browser "file:$DAT_BASENAME.html"
+         quit $"Neither 'qml', 'qml-qt6' or 'x-www-browser' found, cannot run in GUI mode"
     fi
 
-    message "Terminating..."
+    config_fldr                                     # create/update config files
+    CEN_OPT_FILE="$DAT_BASENAME.js"                 # always update_file ...
+    temp='temperature_inside="-"; temperature_outside="-";'
+    create -t -v temp -- "$CEN_OPT_FILE"
+
+    # run the start script (might run DAT_SELF --file ...)
+    # no '-p': centauri-bash-lib would run a subshell causing a hang
+    system -e -- "$DAT_BASENAME.bash"
+
+    # run the html viewer
+    if [ -n "$CEN_OPT_VIEWER" ] ; then              # viewer variable not quoted!
+        system -- $CEN_OPT_VIEWER "file:$DAT_BASENAME.html"
+    elif [ -n "$DAT_QMLVERSION" ] ; then            # run qml script
+        system -- "$DAT_BASENAME.qml"
+    else                                            # use the default browser
+        system -- x-www-browser "file:$DAT_BASENAME.html"
+    fi
+
+    message $"Terminating..."
     CEN_VERB=0
     pkill -s0 "^$CEN_NAME|^mosquitto_sub"
 }
 
 run_data() {
-    message "Starting data mode"
+    message $"Starting data mode"
     local item updt='update_text'
 
     # check pre requisites
@@ -786,7 +818,7 @@ run_data() {
     serializer & DAT_SERIALIZER=$! ; error -q
 
     # check if sub-shells are alive
-    trace -a -p "PIDs  subscriber=%s  serializer=%s" "$DAT_SUBSCRIBER" "$DAT_SERIALIZER"
+    trace -a -p $"PIDs  subscriber=%s  serializer=%s" "$DAT_SUBSCRIBER" "$DAT_SERIALIZER"
     sleep 3                      # give them time to initialize
     kill -0 "$DAT_SUBSCRIBER" &>/dev/null || quit -e $"Subscriber process died"
     kill -0 "$DAT_SERIALIZER" &>/dev/null || quit -e $"Serializer process died"
@@ -795,7 +827,7 @@ run_data() {
     fi
     error -q
 
-    message -a "Running data loop (use ^C to stop)..."
+    message -a $"Running data loop (use ^C to stop)..."
     while : ; do
         ((DAT_COUNTER += 1))
         sleep 1 ; $updt                 # call update_text or update_clock
@@ -806,36 +838,37 @@ run_data() {
 # Main loop
 # ------------------------------------------------------------------------------
 run() {
+    [ -z "$CEN_OPT_ASCII$CEN_OPT_CLOCK$CEN_OPT_HOST$CEN_OPT_URL$CEN_OPT_BASE" ] &&
+        quit $"Don't know what to do, try '$CEN_NAME --help'"
+
+    # get the file path of this script
     case "$BASH_SOURCE" in
     ./*)    DAT_MYSELF="$PWD${BASH_SOURCE:1}" ;;
     /*)     DAT_MYSELF="$BASH_SOURCE" ;;
     *)      system -s DAT_MYSELF -e -- realpath "$BASH_SOURCE" ;;
     esac
 
-# TODO URL
-    [ -n "$CEN_OPT_BASE" ] && config_fldr
-
-    # -I implies -A    -A implies -C
-    if [ -z "$CEN_OPT_INDENT" ] ; then
-        CEN_OPT_INDENT='2,0'
-    else
-        [ -z "$CEN_OPT_ASCII" ] && CEN_OPT_ASCII=2
+    if [ -n "$CEN_OPT_BASE" -a -z "$CEN_OPT_CLOCK" ] ; then
+        system -c -f centauriclock centauristartup
+        config_fldr
+        [ -z "$CEN_OPT_CLOCK$CEN_OPT_ASCII" ] && quit $"Configuration saved"
     fi
- #   [ -n "$CEN_OPT_ASCII" ]  && CEN_OPT_CLOCK=1
 
     case "$CEN_OPT_ASCII" in
-    '') ;;
-    off) CEN_OPT_ASCII=0 ;;
-    on)  CEN_OPT_ASCII=1 ;;
-    *)   [ "${TERM:-dumb}" = 'dumb' ] && CEN_OPT_ASCII=1 || CEN_OPT_ASCII=2 ;;
+    '')     ;;
+    off)    CEN_OPT_ASCII=0 ;;
+    on)     CEN_OPT_ASCII=1 ;;
+    *)      [ "${TERM:-dumb}" = 'dumb' ] && CEN_OPT_ASCII=1 || CEN_OPT_ASCII=2 ;;
     esac
+
 
     for item in 1 2 3 15 ; do
         trap 'echo ; quit $"Terminating..."' "$item"
     done
 
-    if [ -n "$CEN_OPT_CLOCK" ] ; then
-        # CEN_OPT_FILE
+    if [ -n "$CEN_OPT_ASCII" ] ; then
+        run_data "$@"                           # also runs ASCII clock
+    elif [ -n "$CEN_OPT_CLOCK" ] ; then
         run_clock
     else
         run_data "$@"
@@ -847,6 +880,27 @@ run() {
 # ------------------------------------------------------------------------------
 options() {
     case "$1" in
+    '')     # -T or -V imply -C
+            [ -n "$CEN_OPT_TERM$CEN_OPT_VIEWER" ] && CEN_OPT_CLOCK=1
+            # -I implies -A
+            if [ -z "$CEN_OPT_INDENT" ] ; then
+                CEN_OPT_INDENT='2,0'
+            else
+                [ -z "$CEN_OPT_ASCII" ] && CEN_OPT_ASCII=2
+            fi
+            # -F implies -H localhost
+            [ -n "$CEN_OPT_FILE" -a -z "$CEN_OPT_HOST" ] && CEN_OPT_HOST='localhost'
+
+            # -F conflicts with -A -C -U -V
+            [ -n "$CEN_OPT_FILE" ] && [ -n "$CEN_OPT_ASCII$CEN_OPT_CLOCK" ] &&
+                optarg - - -m '--file --clock|--url|--viewer'
+            # -H conflicts with -U
+            [ -n "$CEN_OPT_HOST" ] && [ -n "$CEN_OPT_URL" ] &&
+                optarg - - -m '--host --url'
+            # -A conflict with -U -V
+            [ -n "$CEN_OPT_ASCII" ] && [ -n "$CEN_OPT_URL$CEN_OPT_VIEWER" ] &&
+                optarg - - -m '--ascii --url|--viewer'
+            ;;
     -A|--asc*)          optarg 'ascii'  -   -t ;;       # text
     -B|--bas|--base)    optarg 'base'   -   -t ;;       # text
     -C|--clo*)          optarg 'clock'  -   -f ;;       # flag
@@ -865,15 +919,28 @@ options() {
 # ------------------------------------------------------------------------------
 usage() {
     usagecat <<!EOF
-Usage:     (1) $CEN_NAME [-d|-h] [-v|-q] [-H <host>] [-W <port>] <topic>...
-           (2) $CEN_NAME [-d|-h] [-v|-q] -C [-A <mode>] [-H <host>] [-I <idnt>]
-           ${CEN_NAME//?/°}     [-W <port>] <topic>...
-           (3) $CEN_NAME [-d|-h] [-v|-q] -F [-H <host>]
-           ${CEN_NAME//?/°}     [-W <port>] <topic>...
+Usage:     (1) $CEN_NAME [-d|-h] [-v|-q] -H <host> [-W <port>] <topic>...
+           (2) $CEN_NAME [-d|-h] [-v|-q] -H <host> [-W <port>] -F <path> <topic>...
 
-           Form (1) prints received data, form (2) displays a clock/thermometer
-           and form (3) writes data to a file in Java-Script format. All mqtt
-           date must be in JSON format with quoted topic names and values.
+           (3) $CEN_NAME [-d|-h] [-v|-q] [-C] -A <mode> [-I <idnt>]
+           ${CEN_NAME//?/°}                     -H <host> [-W <port>] <topic>...
+           (4) $CEN_NAME [-d|-h] [-v|-q] -C [-T] -H <host> [-W <port>] [-V <view>] <topic>...
+           (5) $CEN_NAME [-d|-h] [-v|-q] -C [-T] -U <hurl> [-V <view>]
+
+           (6) $CEN_NAME [-d|-h] [-v|-q] -B <fldr> [-H <host>|-U <hurl>] ...
+
+           Form (1) prints received data to stdout, form (2) writes data to a
+           file in Java-Script format.
+
+           Form (3) shows a simple ASCII arg clock/thermometer (using 'toilet'),
+           form (4) displays a HTML based clock/thermometer getting data via MQtt,
+           wheras form (5) load loads data from a Web-Server.
+
+           Form (6) creates a configuration for an appliance (see centauri-soho).
+           Some files used by centauristartup and centauriclock are created in the
+           <fldr> configuration folder.
+
+           MQtt payload must be in JSON format with quoted topic names and values.
 
 Options:   -d --dryrun          show what would be done, make no changes
            -h --help            show this text
@@ -884,7 +951,7 @@ Options:   -d --dryrun          show what would be done, make no changes
            -B --base    <fldr>  use/create a configuration folder
            -C --clock           clock mockup, inside/outside temperature
            -F --file    <path>  dump data to file
-           -H --host    <host>  MQtt host name (+ options if needed)
+           -H --host    <host>  MQtt host name (+ MQtt options if needed)
            -I --indent  <idnt>  indent clock by columns/rows
            -T --terminal        terminal mode (full screen)
            -U --url     <hurl>  HTML url used to load data from a web server
@@ -892,21 +959,22 @@ Options:   -d --dryrun          show what would be done, make no changes
            -W --wait    <port>  wait for connection to become ready
 
 Arguments: <fldr>       folder path, use '-' for '$DAT_BASEDIR'
-           <host>       mosquitto_sub arguments, see example
-           <hurl>       html/htmls only, server must support CORS
+           <host>       host name and mosquitto_sub arguments, see example
+           <hurl>       Web-Server URL, must be configured for CORS access
            <idnt>       text mode indent, <cols>.<rows>, see example
            <mode>       prefer text mode (0|off mono, 1|on pure ASCII, 2|auto)
            <port>       mqtt broker port to wait for, use port 1883 when '-'
            <topic>      topics to subscribe to. Should contain a I'temperature'
            °            field in payload. All other fields ignored
-           <view>       command line for alternate viewer (without URL). The
-                        tool's main process must not go to background
+           <hurl>       Web-Server URL, must be configured for CORS access
+           <view>       command line for an alternate viewer (without URL). The
+           °            tool's main process must not go to background
 
 Examples:  # use -H to pass <host> and options to mosquitto_sub (quoted!)
            $CEN_NAME -v -H 'raspi1.at.home -p 1883 -u otto'
            $CEN_NAME -H 'raspi1'
 
-           # use -B to configurate the clock-mode temperature display
+           # use -B to configurate the clock appliance temperature display
            $CEN_NAME -B - 'myhost'          # without web-server
            $CEN_NAME -B - -U 'http://...'   # to use a web-server
 
@@ -921,9 +989,23 @@ Examples:  # use -H to pass <host> and options to mosquitto_sub (quoted!)
            $CEN_NAME -q -H 'raspi1' -A2 -C  # force ASCII mok-up
            $CEN_NAME -I 40.12               # -C and -A2 are implied
 
+Configs:   # There are three configuration flavours generating 'centauriclock.bash'
+           # in the base folder. When '$CEN_NAME --clock'/'$CEN_NAME --terminal'
+           # is started, the script initializes the data file. These configurations
+           # are also compatible with 'centauriclock run'. Here some examples ...
+
+           # (1) simple clock, no temperature display
+           °     $CEN_NAME --base=- --host=-
+
+           # (2) clock reading data via MQtt -> file (runs background $CEN_NAME)
+           °     $CEN_NAME --base=- --host=mymqtt
+
+           # (3) clock that loads data from a Web-Server (server runs weewx2hass)
+           °     $CEN_NAME --base=- --url='http://server/centauriclock.js'
+
 Packages:  ASCII mode needs:    "toilet" "toilet-fonts"
-           HTML mode needs:     "qml" (bookworm) | "qml-qt6" (trixie or later)
-           °                    "falkon" (not realy used but load dependencies)
+           HTML mode wants:     "qml" (bookworm) | "qml-qt6" (trixie or later)
+           °                    "falkon" (not realy used but loads dependencies)
 
 Note:      It may take a while until MQtt data gets updated and shown
 

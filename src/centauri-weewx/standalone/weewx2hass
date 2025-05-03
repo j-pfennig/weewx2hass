@@ -40,15 +40,15 @@ makeConfig() {
         if [ -z "$_conf" ] ; then                           # no --config option
             _conf="$DAT_DEFDIR/$CEN_NAME" ; [ -f "$_conf" ] || _conf=
         elif ! [ -f "$_conf" -a -r "$_conf" ] ; then        # invalid --config ?
-                quit -e "Not readable file:" "$_conf"
+                quit -e $"Not readable file:" "$_conf"
         fi
         if [ -n "$_conf" ] ; then
-            message "Loading configuration:" "$_conf"
+            message $"Loading configuration:" "$_conf"
                                                             # shellcheck disable=SC1090
             source "$_conf" || quit -e
         fi
         [ -n "$CEN_OPT_HOST" ] && ITEMS+=("$@")
-        [ "${#ITEMS[@]}" = 0 ] && quit -e "Got no configuration data"
+        [ "${#ITEMS[@]}" = 0 ] && quit -e $"Got no configuration data"
     }
 
     # get an ITEM and call ___add_item: <no args>
@@ -57,7 +57,7 @@ makeConfig() {
         for _item in "${ITEMS[@]}" ; do
             if [ "${_item/\//}" = "$_item" ] ; then         # no slash -> is no tag
                 if [ -z "$_args" ] ; then
-                    error "Expected a <tag>:" "$_item" ; continue
+                    error $"Expected a <tag>:" "$_item" ; continue
                 fi
                 _args+=("$_item") ; continue
             fi
@@ -75,7 +75,7 @@ makeConfig() {
             shift ; _vnam="${1%%;*}"
             trace -a -c "___add_item" "$1"
             [ -z "${1#*;}" -o "$_vnam" = "$1" ] &&
-                error "Required syntax is '<column>;<name>[;C|F|%]':" "$1"
+                error $"Required syntax is '<column>;<name>[;C|F|%]':" "$1"
             # column name list for select statement
             [ -z "$DAT_COLUMNS" ] && DAT_COLUMNS="$_vnam" \
                                   || DAT_COLUMNS+=", $_vnam"
@@ -322,7 +322,7 @@ makeJSON() {
     local _vnam="$1" _jitm _jsep _jdat _jval ; shift
     trace -a -c 'makeJSON' "$@"
     while [ "$#" -gt 0 ] ; do
-        _jval="${2%[[::space::]]*}"             # remove trailing whitespace
+        _jval="${2%"${2##*[![:space:]]}"}"      # remove trailing whitespace
         [ "$#" -gt 2 ] && _jsep=',' || _jsep=
         printf -v _jitm '"%s": "%s"%s\n' "$1" "$_jval" "$_jsep"
         _jdat+="$_jitm" ; shift ; shift
@@ -377,11 +377,11 @@ sendMQTT() {
     if [ $((DAT_COUNTER % DAT_ALIVE)) = 0 ] ; then      # always send
         :
     elif [ "${DAT_MQTTDICT["$topi"]}" = "$payl" ] ; then
-       trace -a -p "mqtt '%s' repeated, do not publish" "$topi"
+       trace -a -p $"mqtt '%s' repeated, do not publish" "$topi"
        return 0
     fi
 
-    message -a -p "mqtt %-20s update (%(%Y-%m-%d %H:%M)T)" "'$topi'" -1
+    message -a -p $"mqtt %-20s update (%(%Y-%m-%d %H:%M)T)" "'$topi'" -1
     DAT_MQTTDICT["$topi"]="$payl"
                                                         # shellcheck disable=SC2145
     dryrun "mosquitto_pub $@ -t $topi -m ${payl//[[:cntrl:]]/ }" ||
@@ -451,7 +451,7 @@ run_loop() {
             done
         fi
         ((DAT_COUNTER += 1))                # used in sendMQTT to force send
-        trace -a -p "Sleeping %s [s]" "$DAT_SLEEP"
+        trace -a -p $"Sleeping %s [s]" "$DAT_SLEEP"
         sleep "$DAT_SLEEP"
     done
 }
@@ -459,7 +459,7 @@ run_loop() {
 # Implementing --show
 run_show() {
     if [ "${1:--}" != '-' ] && [ -f "$1" ] ; then
-        confirm -n "Replace existing output file" || quit
+        confirm -n $"Replace existing output file" || quit
     fi
     case "$CEN_OPT_SHOW" in
         con*)       showConf "$1" ;;
@@ -475,12 +475,12 @@ run() {
         run_show "$1"
     else
         [ -z "$CEN_OPT_RUN$CEN_OPT_HOST" ] &&
-            quit "Don't know what to do, try '$CEN_NAME --help'"
+            quit $"Don't know what to do, try '$CEN_NAME --help'"
         makeConfig "$@"
         system -c -f sqlite3 mosquitto_pub
         [ -n "$CEN_OPT_DATA" ] && DAT_SQLITE="$CEN_OPT_DATA"
         [ -f "$DAT_SQLITE" -a -r "$DAT_SQLITE" ] ||
-            quit -e "Not a readable file:" "$DAT_SQLITE"
+            quit -e $"Not a readable file:" "$DAT_SQLITE"
         if [ -z "$CEN_OPT_RUN" ] ; then                 # no --run option
             run_loop
         else
@@ -489,7 +489,7 @@ run() {
             if [ -n "$DAT_LOGFILE" ] ; then
                 true >> "$DAT_LOGFILE" 2>/dev/null
                                                         # shellcheck disable=SC2181
-                [ $? = 0 ] || quit -e "Cannot open logfile:" "$DAT_LOGFILE"
+                [ $? = 0 ] || quit -e $"Cannot open logfile:" "$DAT_LOGFILE"
             else
                 DAT_LOGFILE='/dev/null'
             fi
@@ -502,7 +502,7 @@ run() {
             # This is ugly - we want to run in background but mini-bash-lib has
             # no support for daemons. To avoid that the main shell runs the real
             # quit() function, we redefine quit() to write a message only ...
-            quit() {  message -l "Running in background" ; }
+            quit() {  message -l $"Running in background" ; }
         fi
     fi
 }
@@ -547,7 +547,7 @@ Options:   -d --dryrun          show what would be done, make no changes
            -v --verbose         be verbose (use twice for debug)
 
            -C --config  <conf>  Specify configuration file (the default is to
-                                try loading '/etc/default/$CEN_NAME')
+           °                    try loading '/etc/default/$CEN_NAME')
            -D --data    <fsql>  Path of a weewx SQLite data base file
            -L --logfile <file>  Logfile for --run (default is not output)
            -H --host    <name>  Enter foreground run loop using command line args
@@ -920,9 +920,10 @@ local _name="${2:--}" _aarr="$CEN_ACTARR"
 [ "$_name" = - ]&&_name="CEN_OPT_${1^^}"
 case "${3:--f}" in
 -f)printf -v "$_name" '%s' "${4:-1}";CEN_ARGS=1;;
+-m)[ "${1:-1}" = 1 ]||quit -e $"Conflicting options:" "$4";;
 *)if [ -z "$CEN_ARGOPT" ];then
 [ "$_aarr" != - ]&&[ -z "$_aarr" -o "${_aarr::1}" = '-' ] &&
-quit -e $"Missing option value:" "--$1"
+quit -e $"Missing option value:" "--$1" MM
 CEN_ARGS=2;CEN_ARGOPT="$_aarr"
 else
 CEN_ARGS=1

@@ -1,42 +1,87 @@
 msgid ""
 msgstr "Content-Type: text/plain; charset=UTF-8\n"
 
-#: ../../src/centauri-weewx/shared/weewx2watch:497
-msgid "Waiting for mqtt connection:"
-msgstr ""
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:68
+msgid "Missing configuration:"
+msgstr "Fehlende Konfiguration:"
 
-#: ../../src/centauri-weewx/shared/weewx2watch:500
-msgid "Connection to mqtt is ready"
-msgstr ""
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:514
+msgid "QML display closed, terminating workers"
+msgstr "QML Anzeige geschlossen, beende Arbeits-Prozesse"
 
-#: ../../src/centauri-weewx/shared/weewx2watch:689
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:529
+msgid "Waiting for MQtt connection:"
+msgstr "Auf MQtt Verbindung warten:"
+
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:532
+msgid "Connection to MQtt is ready"
+msgstr "Verbindung zu MQtt ist bereit"
+
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:609
+msgid "Data not changed"
+msgstr "Daten nicht verändert"
+
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:721
 msgid "Time:"
 msgstr "Zeit:"
 
-#: ../../src/centauri-weewx/shared/weewx2watch:694
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:726
 msgid "MQtt: Temperatures   %6s°  %6s°"
 msgstr "MQtt: Temperaturen   %6s°  %6s°"
 
-#: ../../src/centauri-weewx/shared/weewx2watch:698
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:730
 msgid "      Humidity %12s%%  %6s%%"
 msgstr "      Feuchtigkeit %7s%%  %6s%%"
 
-#: ../../src/centauri-weewx/shared/weewx2watch:756
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:752
+msgid "No GUI session detected, try option '--force' to override"
+msgstr "Keine GUI Sitzung erkannt, versuche Option '--force' zum erzwingen"
+
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:758
+msgid ""
+"Neither 'qml', 'qml-qt6' or 'x-www-browser' found, cannot run in GUI mode"
+msgstr "Weder 'qml', 'qml-qt6' noch 'x-www-browser' gefunden, GUI Modus nicht möglich"
+
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:779
+msgid "Terminating..."
+msgstr "Beenden..."
+
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:785
+msgid "Starting data mode"
+msgstr "Data-Modus starten"
+
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:793
 msgid "Cannot write to file:"
-msgstr ""
+msgstr "Kann nicht in Datei schreiben:"
 
-#: ../../src/centauri-weewx/shared/weewx2watch:775
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:812
 msgid "No 'sleep' loadable, using external tool"
+msgstr "Kein ladbares 'sleep', verwende externes Programm"
+
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:826
+msgid "PIDs  subscriber=%s  serializer=%s"
 msgstr ""
 
-#: ../../src/centauri-weewx/shared/weewx2watch:791
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:828
 msgid "Subscriber process died"
-msgstr ""
+msgstr "Subscriber-Prozess gestorben"
 
-#: ../../src/centauri-weewx/shared/weewx2watch:792
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:829
 msgid "Serializer process died"
-msgstr ""
+msgstr "Serializer-Prozess gestorben"
 
-#: ../../src/centauri-weewx/shared/weewx2watch:794
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:831
 msgid "QML display process died"
-msgstr ""
+msgstr "QML Anzeige-Prozess gestorben"
+
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:835
+msgid "Running data loop (use ^C to stop)..."
+msgstr "Daten-Schleife läuft (^C zum Beenden)"
+
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:847
+msgid "Don't know what to do, try '$CEN_NAME --help'"
+msgstr "Weiss nicht was zu tun ist, versuche '$CEN_NAME --help'"
+
+#: /home/local/soho/centauri-weewx/src/centauri-weewx/shared/weewx2watch:859
+msgid "Configuration saved"
+msgstr "Konfiguration gespeichert"

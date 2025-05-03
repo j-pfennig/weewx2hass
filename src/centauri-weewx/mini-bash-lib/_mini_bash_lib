@@ -82,7 +82,7 @@ CEN_RUN_MIN_ARGS=0
 
 # set TEXTDOMAIN back to source
 if [ -n "$CEN_FEATURE_T" ] ; then
-    TEXTDOMAIN="$CEN_NAME" ; TEXTDOMAINDIR="${CEN_CMDBASE%/*/*}/share/locale"
+    TEXTDOMAIN="$CEN_NAME" ; TEXTDOMAINDIR="${CEN_CMDBASE%/*/*/*}/share/locale"
 fi
 :
 

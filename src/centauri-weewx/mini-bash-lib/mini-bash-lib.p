@@ -6,10 +6,10 @@ CEN_STDERR=42
 eval exec "$CEN_STDOUT>&1" "$CEN_STDERR>&2"
 CEN_EXIT=0
 CEN_HOOK_MESSAGE='message'
-CEN_HOOK_QUIT=
+CEN_HOOK_QUIT='_cen_quit'
 CEN_IDNT=
-CEN_MINI_VERSION='0.05'
-: ${CEN_VERSION:=$CEN_MINI_VERSION}
+CEN_MINI_VERSION='0.07'
+: "${CEN_VERSION:=$CEN_MINI_VERSION}"
 CEN_ARGS=
 CEN_ARGOPT=
 CEN_ACTARR=
@@ -271,9 +271,16 @@ case "$_ored" in
 *)"$@";_stat=$?
 esac
 [ "$_stat" = 0 -a -z "$_onam" ]&&return 0
+if [ -n "$_otyp" ];then
 [ "$_otyp" = 2 ]&&local -n _vsys="$_onam"||local _vsys
-[ -n "$_otyp" ]&&readarray -t _vsys <"$CEN_TMP_SYSO"
+if [ "$_odel" = '--' ];then
+readarray -t _vsys <"$CEN_TMP_SYSO"
+else
+local _sifs="$IFS" _list;readarray -t _list <"$CEN_TMP_SYSO";set +f
+IFS=$'\n' _vsys=(${_list[*]});IFS="$_sifs";set -f
+fi
 [ "$_otyp" = 1 ]&&splitjoin -j "$_onam" -- "${_vsys[@]}"
+fi
 [ "$_stat" = 0 ]&&return 0
 CEN_IDNT=;$_oerr -p $"Running '%s' failed (status %s)" "$1" "$_stat"
 [ -n "$_otyp" ]&&message -a -m $_olou -- "${_vsys[@]}"
@@ -336,9 +343,10 @@ local _name="${2:--}" _aarr="$CEN_ACTARR"
 [ "$_name" = - ]&&_name="CEN_OPT_${1^^}"
 case "${3:--f}" in
 -f)printf -v "$_name" '%s' "${4:-1}";CEN_ARGS=1;;
+-m)[ "${1:-1}" = 1 ]||quit -e $"Conflicting options:" "$4";;
 *)if [ -z "$CEN_ARGOPT" ];then
 [ "$_aarr" != - ]&&[ -z "$_aarr" -o "${_aarr::1}" = '-' ] &&
-quit -e $"Missing option value:" "--$1"
+quit -e $"Missing option value:" "--$1" MM
 CEN_ARGS=2;CEN_ARGOPT="$_aarr"
 else
 CEN_ARGS=1
@@ -347,18 +355,21 @@ fi
 esac
 }
 quit(){
+"$CEN_HOOK_QUIT" "$@"
+}
+_cen_quit(){
 local _opts=() _term
 while [ "${1::1}" = - ];do
 case "$1" in
 -)break;;
 --)shift;break;;
--s)shift;CEN_EXIT="$1";;
 -e)_term=$"Terminated after error";CEN_EXIT=1;_opts+=('-e');;
+-h)return;;
+-s)shift;CEN_EXIT="$1";;
 -t|-u)_term=$"Terminated";CEN_EXIT=4;;
 *)_opts+=("$1");;
 esac;shift
 done
-type -t "$CEN_HOOK_QUIT" &>/dev/null&&"$CEN_HOOK_QUIT" "$@"
 if [ -n "$_term" ];then
 if [ $# = 0 ];then set -- "$_term"
 elif [ "$*" = - ];then set --
@@ -382,7 +393,7 @@ printf '%-11s%s\n' "$_labl" "${_line//°/ }"
 done
 }
 command_not_found_handle(){
-set +xeE;exec 1>&$CEN_STDOUT 2>&$CEN_STDERR
+set +xeE;exec 1>&"$CEN_STDOUT" 2>&"$CEN_STDERR"
 message -l $"***ABORT***" $"Command not found:" "$1"
 kill -42 $$
 }

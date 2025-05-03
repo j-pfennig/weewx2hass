@@ -20,9 +20,18 @@ run() {
     DAT_ORIG="${DAT_DEST%/*}/mini-bash-lib"
     folder -f -- "$DAT_ORIG"
 
-    copy -a -u "$DAT_ORIG/src/mini-bash-lib/_mini_bash_lib" "$DAT_DEST/bin"
-
+    [ "$DAT_ORIG/src/mini-bash-lib/_mini_bash_lib" -nt "$DAT_DEST/bin/_mini_bash_lib" ] &&
+        copy -a -v "$DAT_ORIG/src/mini-bash-lib/_mini_bash_lib" "$DAT_DEST/bin"
     error -q
+
+    local
+    for lang in "$DAT_DEST/share/locale"/*/LC_MESSAGES ; do
+        [ -d "$lang" ] || continue
+        lang+='/mini-bash-lib.mo'
+        [ "$DAT_ORIG/share/locale/${lang##*/locale/}" -nt "$lang" ] &&
+            copy -a -v "$DAT_ORIG/share/locale/${lang##*/locale/}" "$lang"
+     done
+quit
 
     embed "$DAT_ORIG/bin/minify" -y -R "$DAT_DEST/src/centauri-weewx/standalone/weewx2hass"
     embed "$DAT_ORIG/bin/minify" -y -R "$DAT_DEST/src/centauri-weewx/standalone/weewx2watch"
