@@ -20,18 +20,20 @@ run() {
     DAT_ORIG="${DAT_DEST%/*}/mini-bash-lib"
     folder -f -- "$DAT_ORIG"
 
-    [ "$DAT_ORIG/src/mini-bash-lib/_mini_bash_lib" -nt "$DAT_DEST/bin/_mini_bash_lib" ] &&
-        copy -a -v "$DAT_ORIG/src/mini-bash-lib/_mini_bash_lib" "$DAT_DEST/bin"
+    local mlib="$DAT_DEST/src/centauri-weewx/mini-bash-lib"
+    [ "$DAT_ORIG/src/mini-bash-lib/_mini_bash_lib" -nt "$mlib/_mini_bash_lib" ] &&
+        copy -a -v "$DAT_ORIG/src/mini-bash-lib/_mini_bash_lib" "$mlib/"
+    [ "$DAT_ORIG/src/mini-bash-lib/mini-bash-lib.p" -nt "$mlib/mini-bash-lib.p" ] &&
+        copy -a -v "$DAT_ORIG/src/mini-bash-lib/mini-bash-lib.p" "$mlib/"
     error -q
 
-    local
+    local lang
     for lang in "$DAT_DEST/share/locale"/*/LC_MESSAGES ; do
         [ -d "$lang" ] || continue
         lang+='/mini-bash-lib.mo'
         [ "$DAT_ORIG/share/locale/${lang##*/locale/}" -nt "$lang" ] &&
             copy -a -v "$DAT_ORIG/share/locale/${lang##*/locale/}" "$lang"
      done
-quit
 
     embed "$DAT_ORIG/bin/minify" -y -R "$DAT_DEST/src/centauri-weewx/standalone/weewx2hass"
     embed "$DAT_ORIG/bin/minify" -y -R "$DAT_DEST/src/centauri-weewx/standalone/weewx2watch"

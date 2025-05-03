@@ -30,14 +30,12 @@ sub-set is needed. For the shared version these files are needed:
             │   ├── _mini_bash_lib      # proxy to load mini-bash-lib
             │   ├── mini-bash-lib.p     # packed library source
             │   └── README
-            ├── shared
-            │   ├── weewx2hass
-            │   └── weewx2watch
-            └── standalone
-                ├── weewx2hass
-                └── weewx2watch
+            └── shared
+                ├── weewx2hass
+                └── weewx2watch
 
-And for the stand-alone version only two files are used:
+And for the stand-alone version only two files are used (i10n is not
+supported for stand-alone):
 
     ├── bin
     │   ├── weewx2hass -> ../src/centauri-weewx/standalone/weewx2hass
